@@ -54,6 +54,23 @@ fn main() {
     };
 
     println!("UserInput: {:?}", user_input1);
+    println!("Encoded UserInput: {:?}", user_input1.encode_to_vec());
+    tls_stream.write_all(&user_input1.encode_to_vec()).unwrap();
+
+    // Close the connection
+    println!("Exiting gracefully...");
+    let status_close = protocol::StatusUpdate {
+        status: protocol::status_update::StatusType::Close as i32,
+        message: "Goodbye".to_string(),
+        code: 0,
+    };
+    println!("StatusUpdate: {:?}", status_close);
+    println!("Encoded StatusUpdate: {:?}", status_close.encode_to_vec());
+    tls_stream.conn.send_close_notify();
+    tls_stream.write_all(&status_close.encode_to_vec()).unwrap();
+
+    tls_stream.sock.shutdown(std::net::Shutdown::Both).unwrap();
+    println!("Connection closed.");
 }
 
 fn connect_tls(
@@ -92,8 +109,9 @@ fn connect_tls(
 
     println!("Connecting to {}:{}...", host, port);
     let server_name = host.to_string().try_into()?;
-    let conn = rustls::ClientConnection::new(Arc::new(config), server_name)?;
-    let sock = TcpStream::connect(format!("{}:{}", host, port))?;
+    let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name)?;
+    let mut sock = TcpStream::connect(format!("{}:{}", host, port))?;
+    conn.complete_io(&mut sock)?; // Complete the handshake with the stream
     let tls_stream = rustls::StreamOwned::new(conn, sock);
 
     // Check if the handshake was successful
@@ -120,6 +138,10 @@ fn handshake(
     println!("Received response: {:?}", &response[..]);
     let server_hello = shared::protocol::ServerHelloAck::decode(&response[..])?;
     println!("ServerHello: {:?}", server_hello);
+
+    if server_hello.version != 1 {
+        return Err("Invalid server version".into());
+    }
 
     Ok(())
 }

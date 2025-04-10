@@ -1,5 +1,5 @@
 use std::{
-    io::Read,
+    io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::Arc,
 };
@@ -29,7 +29,7 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
     println!("PEM:\n{}", cert.pem());
     println!("Serialized:\n{}", key_pair.serialize_pem());
 
-    let private_key = PrivateKeyDer::from_pem_slice(cert.pem().as_bytes())
+    let private_key = PrivateKeyDer::from_pem_slice(key_pair.serialize_pem().as_bytes())
         .expect("Failed to parse private key PEM");
 
     // Create a TLS server configuration with the generated certificate and key
@@ -50,6 +50,7 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
         let tls_stream = StreamOwned::new(conn, stream);
 
         // Handle the client connection in a separate thread or async task
+        println!("\nHandling new client connection...");
         if let Err(e) = handle_client(tls_stream) {
             eprintln!("Error handling client {}: {}", addr, e);
         }
@@ -70,6 +71,36 @@ fn handle_client(
     println!("Received data: {:?}", &buf[..]);
     let client_hello = shared::protocol::ClientHello::decode(&buf[..])?;
     println!("ClientHello: {:?}", client_hello);
+
+    let server_hello = shared::protocol::ServerHelloAck { version: 1 };
+    println!("ServerHello: {:?}", server_hello);
+    println!("Encoded ServerHello: {:?}", server_hello.encode_to_vec());
+    tls_stream.write_all(&server_hello.encode_to_vec())?;
+
+    loop {
+        let bytes_read = tls_stream.read(&mut buf)?;
+        if bytes_read == 0 {
+            println!("Client force disconnected, closing connection...");
+            break;
+        }
+        buf.truncate(bytes_read); // Resize the buffer to the actual number of bytes read
+        println!("Received data: {:?}", &buf[..]);
+        if let Ok(status_update) = shared::protocol::StatusUpdate::decode(&buf[..]) {
+            println!("StatusUpdate: {:?}", status_update);
+            if status_update.status == shared::protocol::status_update::StatusType::Close as i32 {
+                println!("Received graceful close status, closing connection...");
+                tls_stream.conn.send_close_notify();
+                tls_stream.flush()?; // Ensure the close_notify is sent
+                let _ = tls_stream.sock.shutdown(std::net::Shutdown::Both);
+                break;
+            }
+        } else if let Ok(user_input) = shared::protocol::UserInput::decode(&buf[..]) {
+            println!("UserInput: {:?}", user_input);
+            // Process user input here
+        } else {
+            println!("Unknown message type, ignoring...");
+        }
+    }
 
     Ok(())
 }
