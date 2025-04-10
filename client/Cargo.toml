@@ -1,0 +1,13 @@
+[package]
+name = "gsh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+clap = { version = "4.5.35", features = ["derive"] }
+rustls = { version = "0.23.26", features = [
+	"ring",
+	"std",
+], default-features = false }
+webpki-roots = "0.26.8"

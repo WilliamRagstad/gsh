@@ -1,0 +1,13 @@
+[package]
+name = "example_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+rustls = { version = "0.23.26", features = [
+	"ring",
+	"std",
+], default-features = false }
+webpki-roots = "0.26.8"
+rcgen = "0.13.2"
