@@ -1,10 +1,10 @@
 <br/>
 <div align="center">
-  ————————————————
+  ———————————————
   <br>
   <img src="assets/logo.png" alt="Graphical Shell Logo" height="100">
   <br>
-  ————————————————
+  ———————————————
 </div>
 <br/>
 
