@@ -1,6 +1,10 @@
-# gsh: Graphical Shell
+# Graphical Shell
 
-**gsh** is an innovative graphical shell designed to provide users with an intuitive and efficient command-line interface, enhanced with graphical capabilities for improved usability and productivity.
+Graphical Shell is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
+Whether you're building a personal server, a graphical Bulletin Board System (BBS), or exploring new interactive experiences, Graphical Shell provides the tools to bring your ideas to life.
+
+It shippes with a SSH-like client application (`gsh`) that allows users to connect to a server and interact with it through a graphical interface.
+All rendering and graphical elements are handled by the server, while the client seamlessly streams user interactions and input to the server for processing.
 
 ## Features
 

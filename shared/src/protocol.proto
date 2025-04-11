@@ -2,13 +2,11 @@ syntax = "proto3";
 package protocol;
 
 message ClientHello {
-	// Client version
-	uint32 version = 2;   // Version of the client software
+	uint32 version = 2;
 }
 
 message ServerHelloAck {
-	// Server version
-	uint32 version = 1;   // Version of the server software
+	uint32 version = 1;
 }
 
 // Message representing a frame of image data
@@ -19,10 +17,10 @@ message FrameData {
 		RGBA = 1;
 		GRAYSCALE = 2;
 	}
-	bytes image_data = 1; // Raw image data in bytes
+	FrameFormat format = 4;
 	uint32 width = 2;     // Width of the image in pixels
 	uint32 height = 3;    // Height of the image in pixels
-	FrameFormat format = 4;
+	bytes image_data = 1; // Raw image data in bytes
 }
 
 // Message representing user input events
@@ -53,10 +51,11 @@ message UserInput {
 		WINDOW_HIDE = 23;
 	}
 	InputType kind = 1;   // Type of input event
-	uint32 key_code = 2;   // Key code (for keyboard events)
-	int32 x = 3;          // X coordinate (for mouse events)
-	int32 y = 4;          // Y coordinate (for mouse events)
-	int32 delta = 5;      // Scroll delta (for mouse scroll events)
+	int32 key_code = 2;   // Key code (for keyboard events)
+	uint32 modifiers = 3;   // Modifier keys (e.g., Shift, Ctrl, Alt)
+	int32 x = 4;          // X coordinate (for mouse events)
+	int32 y = 5;          // Y coordinate (for mouse events)
+	int32 delta = 6;      // Scroll delta (for mouse scroll events)
 }
 
 // Message representing status updates
@@ -69,19 +68,7 @@ message StatusUpdate {
 		ERROR = 2;
 		EXIT = 3;
 	}
-	StatusType status = 1;   // Type of status update
+	StatusType kind = 1;   // Type of status update
 	string message = 2;      // Status message
 	int32 code = 3;          // Status code
 }
-
-// // Service definition for gsh communication
-// service GshService {
-// 	// Sends a frame from server to client
-// 	rpc SendFrame(FrameData) returns (StatusUpdate);
-
-// 	// Receives user input from client to server
-// 	rpc ReceiveInput(UserInput) returns (StatusUpdate);
-
-// 	// Sends a control command from client to server
-// 	rpc SendCommand(ControlCommand) returns (StatusUpdate);
-// }

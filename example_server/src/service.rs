@@ -1,9 +1,5 @@
-use shared::protocol::{frame_data::FrameFormat, FrameData, StatusUpdate, UserInput};
-
-pub enum ClientEvent {
-    StatusUpdate(StatusUpdate),
-    UserInput(UserInput),
-}
+use shared::protocol::{frame_data::FrameFormat, FrameData};
+use shared::ClientEvent;
 
 pub struct Service {
     client_sender: std::sync::mpsc::Sender<FrameData>,
@@ -20,8 +16,8 @@ impl Service {
         Self {
             client_sender,
             client_receiver,
-            frame_width: 420,
-            frame_height: 180,
+            frame_width: 5,
+            frame_height: 5,
         }
     }
 
@@ -49,8 +45,14 @@ impl Service {
         const FPS: u32 = 2;
         loop {
             match self.client_receiver.try_recv() {
-                Ok(ClientEvent::StatusUpdate(status)) => {
-                    println!("Received StatusUpdate: {:?}", status);
+                Ok(ClientEvent::StatusUpdate(status_update)) => {
+                    println!("StatusUpdate: {:?}", status_update);
+                    if status_update.kind
+                        == shared::protocol::status_update::StatusType::Exit as i32
+                    {
+                        println!("Received graceful exit status, closing service...");
+                        break;
+                    }
                 }
                 Ok(ClientEvent::UserInput(input)) => {
                     println!("Received UserInput: {:?}", input);

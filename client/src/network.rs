@@ -13,7 +13,7 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<(), Box<dyn std::error::Er
     println!("Exiting gracefully...");
     messages.get_stream().conn.send_close_notify();
     messages.write_message(protocol::StatusUpdate {
-        status: protocol::status_update::StatusType::Exit as i32,
+        kind: protocol::status_update::StatusType::Exit as i32,
         message: "Goodbye".to_string(),
         code: 0,
     })?;
@@ -43,7 +43,9 @@ pub fn connect_tls(
     if tls_stream.conn.is_handshaking() {
         return Err("Handshake failed".into());
     }
-    Ok(Messages::new(tls_stream))
+    let mut messages = Messages::new(tls_stream);
+    shared::handshake_client(&mut messages)?;
+    Ok(messages)
 }
 
 fn tls_config(insecure: bool) -> Result<rustls::ClientConfig, Box<dyn std::error::Error>> {

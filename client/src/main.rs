@@ -1,8 +1,14 @@
+use std::sync::mpsc;
+
 use clap::Parser;
 use network::Messages;
-use shared::{prost::Message, protocol};
+use shared::{
+    prost::Message,
+    protocol::{self, StatusUpdate},
+};
 
 mod network;
+mod window;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -19,21 +25,16 @@ struct Args {
 }
 
 fn main() {
-    // Parse command line arguments
-    let args = Args::parse();
-
-    // Connect to the server
-    let mut messages =
-        network::connect_tls(&args.host, args.port, args.insecure).unwrap_or_else(|e| {
-            eprintln!("Failed to connect: {}", e);
-            std::process::exit(1);
-        });
-
-    // Finnish the handshake
-    if let Err(e) = shared::handshake_client(&mut messages) {
-        eprintln!("Handshake failed: {}", e);
-        return;
+    if let Err(e) = client(Args::parse()) {
+        eprintln!("Failed to start client: {}", e);
     }
+}
+
+fn client(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    // let (event_send, event_recv) = mpsc::channel::<shared::ClientEvent>();
+    // let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
+    // let client_window = window::ClientWindow::new(event_send, frame_recv);
+    // client_window.main()?;
 
     // let user_input1 = protocol::UserInput {
     //     kind: protocol::user_input::InputType::KeyPress as i32,
@@ -46,43 +47,93 @@ fn main() {
     // println!("UserInput: {:?}", user_input1);
     // messages.write_message(user_input1).unwrap();
 
+    // Connect to the server
+    let mut messages = network::connect_tls(&args.host, args.port, args.insecure)?;
     if let Err(e) = event_loop(&mut messages) {
-        eprintln!("Event loop failed: {}", e);
-        return;
+        eprintln!("Error in event loop: {}", e);
     }
-
-    // Shutdown the connection
-    if let Err(e) = network::shutdown_tls(messages) {
-        eprintln!("Failed to shut down: {}", e);
-    }
+    let _ = network::shutdown_tls(messages);
+    Ok(())
 }
 
 fn event_loop(messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+    // Set the socket to non-blocking mode
+    // All calls to `read_message` will return immediately, even if no data is available
+    messages.get_stream().sock.set_nonblocking(true)?;
+
+    let (event_send, event_recv) = mpsc::channel::<shared::ClientEvent>();
+    let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
+    let wnd_thread = std::thread::spawn(move || {
+        let wnd = window::ClientWindow::new(event_send, frame_recv);
+        if let Err(e) = wnd.main() {
+            eprintln!("Window thread error: {}", e);
+        }
+    });
+
     loop {
-        let buf = match messages.read_message() {
-            Ok(buf) => buf,
+        // Read messages from the server
+        match messages.read_message() {
+            Ok(buf) => {
+                if let Ok(status_update) = protocol::StatusUpdate::decode(&buf[..]) {
+                    if !handle_status_update(status_update) {
+                        break;
+                    }
+                }
+                if let Ok(frame) = protocol::FrameData::decode(&buf[..]) {
+                    frame_send.send(frame)?;
+                } else {
+                    println!("Received data: {:?}", &buf[..]);
+                    println!("Unknown message type, ignoring...");
+                }
+            }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::UnexpectedEof => {
-                    println!("Server force disconnected, closing connection...");
+                    println!("Client force disconnected, closing connection...");
                     break;
                 }
+                std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
                 _ => {
                     eprintln!("Error reading message: {}", err);
                     break;
                 }
             },
         };
-        println!("Received data: {:?}", &buf[..]);
-        if let Ok(status_update) = protocol::StatusUpdate::decode(&buf[..]) {
-            println!("StatusUpdate: {:?}", status_update);
-            if status_update.status == protocol::status_update::StatusType::Exit as i32 {
-                println!("Received graceful exit status, closing connection...");
-                break;
-            }
-        } else {
-            println!("Failed to decode message");
+
+        // Read messages from the client window
+        match event_recv.try_recv() {
+            Ok(msg) => match msg {
+                shared::ClientEvent::StatusUpdate(status_update) => {
+                    println!("StatusUpdate: {:?}", status_update);
+                    messages.write_message(status_update)?
+                }
+                shared::ClientEvent::UserInput(user_input) => {
+                    println!("UserInput: {:?}", user_input);
+                    messages.write_message(user_input)?
+                }
+            },
+            Err(e) => match e {
+                mpsc::TryRecvError::Empty => (), // do nothing, just continue
+                mpsc::TryRecvError::Disconnected => {
+                    println!("Client window disconnected, exiting...");
+                    break;
+                }
+            },
         }
     }
     println!("Exiting event loop...");
+    if let Err(e) = wnd_thread.join() {
+        eprintln!("Window thread error: {:?}", e);
+    }
     Ok(())
+}
+
+fn handle_status_update(su: StatusUpdate) -> bool {
+    if su.kind == protocol::status_update::StatusType::Exit as i32 {
+        println!("Received graceful exit status, closing connection...");
+        return false;
+    } else {
+        println!("StatusUpdate: {:?}", su);
+    }
+    // continue the loop
+    true
 }

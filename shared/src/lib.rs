@@ -6,6 +6,10 @@ use prost::Message;
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
 }
+pub enum ClientEvent {
+    StatusUpdate(protocol::StatusUpdate),
+    UserInput(protocol::UserInput),
+}
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -37,11 +41,11 @@ impl<S: Read + Write + Send> MessageCodec<S> {
     pub fn read_message(&mut self) -> std::io::Result<prost::bytes::Bytes> {
         let mut length_buf = [0; LENGTH_SIZE];
         self.stream.read_exact(&mut length_buf)?;
-        println!("Received length: {:?}", &length_buf[..]);
+        // println!("Received length: {:?}", &length_buf[..]);
         let length = LengthType::from_be_bytes(length_buf) as usize;
         self.buf.resize(length, 0);
         self.stream.read_exact(&mut self.buf)?;
-        println!("Received data: {:?}", &self.buf[..]);
+        // println!("Received data: {:?}", &self.buf[..]);
         // Ok(self.buf.clone())
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
@@ -60,7 +64,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf)?;
         self.stream.flush()?;
-        println!("Sent message: {:?}", &buf[..]);
+        // println!("Sent message: {:?}", &buf[..]);
         Ok(())
     }
 }
@@ -81,7 +85,7 @@ where
 
     if server_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {
-            status: protocol::status_update::StatusType::Exit as i32,
+            kind: protocol::status_update::StatusType::Exit as i32,
             message: "Invalid server version".to_string(),
             code: 0,
         })?;
@@ -106,7 +110,7 @@ where
 
     if client_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {
-            status: protocol::status_update::StatusType::Exit as i32,
+            kind: protocol::status_update::StatusType::Exit as i32,
             message: "Invalid client version".to_string(),
             code: 0,
         })?;

@@ -10,7 +10,7 @@ use rustls::{
     server::ServerConfig,
     ServerConnection, StreamOwned,
 };
-use shared::{prost::Message, MessageCodec};
+use shared::{prost::Message, protocol::StatusUpdate, MessageCodec};
 
 mod service;
 type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
@@ -39,7 +39,8 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
         let mut conn = ServerConnection::new(Arc::new(config.clone()))?;
         conn.complete_io(&mut stream)?; // Complete the handshake with the stream
         let tls_stream = StreamOwned::new(conn, stream);
-        let messages = Messages::new(tls_stream);
+        let mut messages = Messages::new(tls_stream);
+        shared::handshake_server(&mut messages)?;
         println!("\nHandling new client connection from {}", addr);
         if let Err(e) = handle_client(messages) {
             eprintln!("Error handling client {}: {}", addr, e);
@@ -49,15 +50,14 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
-    shared::handshake_server(&mut messages)?;
     // Set the socket to non-blocking mode
     // All calls to `read_message` will return immediately, even if no data is available
     messages.get_stream().sock.set_nonblocking(true)?;
-    let (event_send, event_recv) = mpsc::channel::<service::ClientEvent>();
-    let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
 
-    let service = service::Service::new(frame_send, event_recv);
+    let (event_send, event_recv) = mpsc::channel::<shared::ClientEvent>();
+    let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
     let service_thread = std::thread::spawn(move || {
+        let service = service::Service::new(frame_send, event_recv);
         if let Err(e) = service.main() {
             eprintln!("Service thread error: {}", e);
         }
@@ -67,12 +67,10 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
         // Read messages from the client
         match messages.read_message() {
             Ok(buf) => {
-                println!("Received data: {:?}", &buf[..]);
                 if let Ok(status_update) = shared::protocol::StatusUpdate::decode(&buf[..]) {
                     println!("StatusUpdate: {:?}", status_update);
-                    if status_update.status
-                        == shared::protocol::status_update::StatusType::Exit as i32
-                    {
+                    let status = status_update.kind;
+                    if status == shared::protocol::status_update::StatusType::Exit as i32 {
                         println!("Received graceful exit status, closing connection...");
                         messages.get_stream().conn.send_close_notify();
                         messages.get_stream().flush()?;
@@ -83,11 +81,12 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
                         drop(messages);
                         break;
                     }
-                    event_send.send(service::ClientEvent::StatusUpdate(status_update))?;
+                    event_send.send(shared::ClientEvent::StatusUpdate(status_update))?;
                 } else if let Ok(user_input) = shared::protocol::UserInput::decode(&buf[..]) {
                     println!("UserInput: {:?}", user_input);
-                    event_send.send(service::ClientEvent::UserInput(user_input))?;
+                    event_send.send(shared::ClientEvent::UserInput(user_input))?;
                 } else {
+                    println!("Received data: {:?}", &buf[..]);
                     println!("Unknown message type, ignoring...");
                 }
             }
@@ -115,7 +114,12 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
             },
         }
     }
-    println!("Exiting event loop...");
+    event_send.send(shared::ClientEvent::StatusUpdate(StatusUpdate {
+        kind: shared::protocol::status_update::StatusType::Exit as i32,
+        message: "Client disconnected".to_string(),
+        code: 0,
+    }))?;
+    println!("Exiting client handler loop...");
     // Wait for the service thread to finish
     if let Err(e) = service_thread.join() {
         eprintln!("Service thread error: {:?}", e);
