@@ -1,15 +1,15 @@
-use std::{net::TcpStream, sync::Arc};
-
+use anyhow::Result;
 use rustls::{
     client::danger::{ServerCertVerified, ServerCertVerifier},
     crypto::{ring as provider, CryptoProvider},
     time_provider, ClientConnection, StreamOwned,
 };
 use shared::{protocol, MessageCodec};
+use std::{net::TcpStream, sync::Arc};
 
 pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 
-pub fn shutdown_tls(mut messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
+pub fn shutdown_tls(mut messages: Messages) -> Result<()> {
     println!("Exiting gracefully...");
     messages.get_stream().conn.send_close_notify();
     messages.write_message(protocol::StatusUpdate {
@@ -26,11 +26,7 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-pub fn connect_tls(
-    host: &str,
-    port: u16,
-    insecure: bool,
-) -> Result<Messages, Box<dyn std::error::Error>> {
+pub fn connect_tls(host: &str, port: u16, insecure: bool) -> Result<Messages> {
     println!("Connecting to {}:{}...", host, port);
     let server_name = host.to_string().try_into()?;
     let tls_config = tls_config(insecure)?;
@@ -41,14 +37,14 @@ pub fn connect_tls(
 
     // Check if the handshake was successful
     if tls_stream.conn.is_handshaking() {
-        return Err("Handshake failed".into());
+        return Err(anyhow::anyhow!("Handshake failed"));
     }
     let mut messages = Messages::new(tls_stream);
     shared::handshake_client(&mut messages)?;
     Ok(messages)
 }
 
-fn tls_config(insecure: bool) -> Result<rustls::ClientConfig, Box<dyn std::error::Error>> {
+fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {
     let root_store = if insecure {
         rustls::RootCertStore::empty()
     } else {

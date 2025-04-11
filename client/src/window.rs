@@ -1,3 +1,4 @@
+use anyhow::Result;
 use sdl2::rect::Rect;
 use sdl2::{pixels::Color, render};
 use shared::protocol::user_input;
@@ -43,7 +44,7 @@ impl ClientWindow {
         }
     }
 
-    fn render_frame(&mut self, frame: &FrameData) -> Result<(), Box<dyn std::error::Error>> {
+    fn render_frame(&mut self, frame: &FrameData) -> Result<()> {
         // Here you would typically update the window with the new frame data
         // For example, using SDL2 to create a texture and render it.
         // Here you would typically create a texture from the frame data and render it to the window
@@ -53,7 +54,7 @@ impl ClientWindow {
         // self.window.copy(&texture, None, None)?;
         // println!("Received frame data: {:?}", frame);
         if frame.format != FrameFormat::Rgba as i32 {
-            return Err("Unsupported frame format".into());
+            return Err(anyhow::anyhow!("Unsupported frame format"));
         }
         self.canvas.set_draw_color(Color::BLACK);
         self.canvas.clear();
@@ -68,18 +69,20 @@ impl ClientWindow {
             )
             .unwrap();
         texture.update(None, &frame.image_data, frame.width as usize * 4)?; // Assuming RGBA format
-        self.canvas.copy(
-            &texture,
-            None,
-            Some(Rect::new(0, 0, frame.width, frame.height)),
-        )?;
+        self.canvas
+            .copy(
+                &texture,
+                None,
+                Some(Rect::new(0, 0, frame.width, frame.height)),
+            )
+            .map_err(anyhow::Error::msg)?;
 
         // Update the window with the new frame data
         self.canvas.present();
         Ok(())
     }
 
-    pub fn main(mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn main(mut self) -> Result<()> {
         println!("SDL2 Window started...");
         loop {
             match self.server_receiver.try_recv() {

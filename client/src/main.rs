@@ -1,11 +1,11 @@
-use std::sync::mpsc;
-
+use anyhow::Result;
 use clap::Parser;
 use network::Messages;
 use shared::{
     prost::Message,
     protocol::{self, StatusUpdate},
 };
+use std::sync::mpsc;
 
 mod network;
 mod window;
@@ -26,11 +26,11 @@ struct Args {
 
 fn main() {
     if let Err(e) = client(Args::parse()) {
-        eprintln!("Failed to start client: {}", e);
+        log::error!("Failed to start client: {}", e);
     }
 }
 
-fn client(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+fn client(args: Args) -> Result<()> {
     // let (event_send, event_recv) = mpsc::channel::<shared::ClientEvent>();
     // let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
     // let client_window = window::ClientWindow::new(event_send, frame_recv);
@@ -56,7 +56,7 @@ fn client(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn event_loop(messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+fn event_loop(messages: &mut Messages) -> Result<()> {
     // Set the socket to non-blocking mode
     // All calls to `read_message` will return immediately, even if no data is available
     messages.get_stream().sock.set_nonblocking(true)?;

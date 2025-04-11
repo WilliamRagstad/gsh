@@ -1,9 +1,4 @@
-use std::{
-    io::Write,
-    net::{TcpListener, TcpStream},
-    sync::{mpsc, Arc},
-};
-
+use anyhow::Result;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::{
     pki_types::{pem::PemObject, PrivateKeyDer},
@@ -11,6 +6,11 @@ use rustls::{
     ServerConnection, StreamOwned,
 };
 use shared::{prost::Message, protocol::StatusUpdate, MessageCodec};
+use std::{
+    io::Write,
+    net::{TcpListener, TcpStream},
+    sync::{mpsc, Arc},
+};
 
 mod service;
 type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
@@ -23,7 +23,7 @@ fn main() {
     }
 }
 
-fn server() -> Result<(), Box<dyn std::error::Error>> {
+fn server() -> Result<()> {
     // Generate a self-signed certificate for the server
     let subject_alt_names = vec!["hello.world.example".to_string(), "localhost".to_string()];
     let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names).unwrap();
@@ -49,7 +49,7 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_client(mut messages: Messages) -> Result<()> {
     // Set the socket to non-blocking mode
     // All calls to `read_message` will return immediately, even if no data is available
     messages.get_stream().sock.set_nonblocking(true)?;

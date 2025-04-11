@@ -41,12 +41,9 @@ impl<S: Read + Write + Send> MessageCodec<S> {
     pub fn read_message(&mut self) -> std::io::Result<prost::bytes::Bytes> {
         let mut length_buf = [0; LENGTH_SIZE];
         self.stream.read_exact(&mut length_buf)?;
-        // println!("Received length: {:?}", &length_buf[..]);
         let length = LengthType::from_be_bytes(length_buf) as usize;
         self.buf.resize(length, 0);
         self.stream.read_exact(&mut self.buf)?;
-        // println!("Received data: {:?}", &self.buf[..]);
-        // Ok(self.buf.clone())
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
         let bytes = prost::bytes::Bytes::from(self.buf.clone());
@@ -64,7 +61,6 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf)?;
         self.stream.flush()?;
-        // println!("Sent message: {:?}", &buf[..]);
         Ok(())
     }
 }
@@ -81,7 +77,6 @@ where
     })?;
 
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
-    println!("ServerHello: {:?}", server_hello);
 
     if server_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {
@@ -106,7 +101,6 @@ where
     S: Read + Write + Send,
 {
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
-    println!("ClientHello: {:?}", client_hello);
 
     if client_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {

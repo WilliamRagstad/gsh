@@ -1,3 +1,4 @@
+use anyhow::Result;
 use shared::protocol::{frame_data::FrameFormat, FrameData};
 use shared::ClientEvent;
 
@@ -37,7 +38,7 @@ impl Service {
         }
     }
 
-    pub fn main(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn main(self) -> Result<()> {
         println!("Service started...");
         let mut fill = (0x00, 0x00, 0x00); // Initial color (black)
         let mut frame_count = 0;
