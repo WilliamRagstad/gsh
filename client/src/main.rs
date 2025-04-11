@@ -75,8 +75,8 @@ fn event_loop(messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>>
         println!("Received data: {:?}", &buf[..]);
         if let Ok(status_update) = protocol::StatusUpdate::decode(&buf[..]) {
             println!("StatusUpdate: {:?}", status_update);
-            if status_update.status == protocol::status_update::StatusType::Close as i32 {
-                println!("Received graceful close status, closing connection...");
+            if status_update.status == protocol::status_update::StatusType::Exit as i32 {
+                println!("Received graceful exit status, closing connection...");
                 break;
             }
         } else {

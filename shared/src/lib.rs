@@ -81,7 +81,7 @@ where
 
     if server_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {
-            status: protocol::status_update::StatusType::Close as i32,
+            status: protocol::status_update::StatusType::Exit as i32,
             message: "Invalid server version".to_string(),
             code: 0,
         })?;
@@ -106,7 +106,7 @@ where
 
     if client_hello.version != PROTOCOL_VERSION {
         messages.write_message(protocol::StatusUpdate {
-            status: protocol::status_update::StatusType::Close as i32,
+            status: protocol::status_update::StatusType::Exit as i32,
             message: "Invalid client version".to_string(),
             code: 0,
         })?;

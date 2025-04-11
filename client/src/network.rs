@@ -13,7 +13,7 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<(), Box<dyn std::error::Er
     println!("Exiting gracefully...");
     messages.get_stream().conn.send_close_notify();
     messages.write_message(protocol::StatusUpdate {
-        status: protocol::status_update::StatusType::Close as i32,
+        status: protocol::status_update::StatusType::Exit as i32,
         message: "Goodbye".to_string(),
         code: 0,
     })?;
@@ -22,7 +22,7 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<(), Box<dyn std::error::Er
         .sock
         .shutdown(std::net::Shutdown::Both)?;
     println!("Connection closed.");
-    drop(messages); // Drop the messages object to close the connection
+    drop(messages);
     Ok(())
 }
 

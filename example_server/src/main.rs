@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{mpsc, Arc},
 };
 
 use rcgen::{generate_simple_self_signed, CertifiedKey};
@@ -11,6 +11,8 @@ use rustls::{
     ServerConnection, StreamOwned,
 };
 use shared::{prost::Message, MessageCodec};
+
+mod service;
 type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
 
 const PORT: u16 = 1122;
@@ -48,13 +50,55 @@ fn server() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
     shared::handshake_server(&mut messages)?;
+    // Set the socket to non-blocking mode
+    // All calls to `read_message` will return immediately, even if no data is available
+    messages.get_stream().sock.set_nonblocking(true)?;
+    let (event_send, event_recv) = mpsc::channel::<service::ClientEvent>();
+    let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
+
+    let service = service::Service::new(frame_send, event_recv);
+    let service_thread = std::thread::spawn(move || {
+        if let Err(e) = service.main() {
+            eprintln!("Service thread error: {}", e);
+        }
+    });
+
     loop {
-        let buf = match messages.read_message() {
-            Ok(buf) => buf,
+        // Read messages from the client
+        match messages.read_message() {
+            Ok(buf) => {
+                println!("Received data: {:?}", &buf[..]);
+                if let Ok(status_update) = shared::protocol::StatusUpdate::decode(&buf[..]) {
+                    println!("StatusUpdate: {:?}", status_update);
+                    if status_update.status
+                        == shared::protocol::status_update::StatusType::Exit as i32
+                    {
+                        println!("Received graceful exit status, closing connection...");
+                        messages.get_stream().conn.send_close_notify();
+                        messages.get_stream().flush()?;
+                        messages
+                            .get_stream()
+                            .sock
+                            .shutdown(std::net::Shutdown::Both)?;
+                        drop(messages);
+                        break;
+                    }
+                    event_send.send(service::ClientEvent::StatusUpdate(status_update))?;
+                } else if let Ok(user_input) = shared::protocol::UserInput::decode(&buf[..]) {
+                    println!("UserInput: {:?}", user_input);
+                    event_send.send(service::ClientEvent::UserInput(user_input))?;
+                } else {
+                    println!("Unknown message type, ignoring...");
+                }
+            }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::UnexpectedEof => {
                     println!("Client force disconnected, closing connection...");
                     break;
+                }
+                std::io::ErrorKind::WouldBlock => {
+                    // No data available yet, continue the loop immediately
+                    continue;
                 }
                 _ => {
                     eprintln!("Error reading message: {}", err);
@@ -62,26 +106,25 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
                 }
             },
         };
-        println!("Received data: {:?}", &buf[..]);
-        if let Ok(status_update) = shared::protocol::StatusUpdate::decode(&buf[..]) {
-            println!("StatusUpdate: {:?}", status_update);
-            if status_update.status == shared::protocol::status_update::StatusType::Close as i32 {
-                println!("Received graceful close status, closing connection...");
-                messages.get_stream().conn.send_close_notify();
-                messages.get_stream().flush()?; // Ensure the close_notify is sent
-                messages
-                    .get_stream()
-                    .sock
-                    .shutdown(std::net::Shutdown::Both)?;
-                drop(messages); // Drop the messages object to close the connection
-                break;
+        // Read messages from the service
+        match frame_recv.try_recv() {
+            Ok(frame) => {
+                println!("Received frame from service: {:?}", frame);
+                messages.write_message(frame)?;
             }
-        } else if let Ok(user_input) = shared::protocol::UserInput::decode(&buf[..]) {
-            println!("UserInput: {:?}", user_input);
-            // Process user input here
-        } else {
-            println!("Unknown message type, ignoring...");
+            Err(e) => match e {
+                mpsc::TryRecvError::Empty => (), // do nothing, just continue
+                mpsc::TryRecvError::Disconnected => {
+                    println!("Service disconnected, exiting...");
+                    break;
+                }
+            },
         }
+    }
+    println!("Exiting event loop...");
+    // Wait for the service thread to finish
+    if let Err(e) = service_thread.join() {
+        eprintln!("Service thread error: {:?}", e);
     }
     Ok(())
 }

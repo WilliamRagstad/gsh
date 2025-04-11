@@ -29,30 +29,34 @@ message FrameData {
 // Client -> Server
 message UserInput {
 	enum InputType {
-		KEY_PRESS = 0;
-		KEY_RELEASE = 1;
-		MOUSE_CLICK = 2;
-		MOUSE_MOVE = 3;
-		MOUSE_SCROLL = 4;
+		START = 0;
+		STOP = 1;
+		PAUSE = 2;
+		RESUME = 3;
+		RESET = 4;
+		KEY_PRESS = 5;
+		KEY_RELEASE = 6;
+		MOUSE_CLICK = 7;
+		MOUSE_MOVE = 8;
+		MOUSE_SCROLL = 9;
+		WINDOW_RESIZE = 10;
+		WINDOW_MOVE = 11;
+		WINDOW_CLOSE = 12;
+		WINDOW_MINIMIZE = 13;
+		WINDOW_MAXIMIZE = 14;
+		WINDOW_RESTORE = 15;
+		WINDOW_FULLSCREEN = 16;
+		WINDOW_UNFULLSCREEN = 17;
+		WINDOW_FOCUS = 18;
+		WINDOW_UNFOCUS = 19;
+		WINDOW_SHOW = 22;
+		WINDOW_HIDE = 23;
 	}
 	InputType kind = 1;   // Type of input event
 	uint32 key_code = 2;   // Key code (for keyboard events)
 	int32 x = 3;          // X coordinate (for mouse events)
 	int32 y = 4;          // Y coordinate (for mouse events)
 	int32 delta = 5;      // Scroll delta (for mouse scroll events)
-}
-
-// Message representing control commands
-// Client -> Server
-message ControlCommand {
-	enum CommandType {
-		START = 0;
-		STOP = 1;
-		PAUSE = 2;
-		RESUME = 3;
-		RESET = 4;
-	}
-	CommandType command = 1; // Type of control command
 }
 
 // Message representing status updates
@@ -63,7 +67,7 @@ message StatusUpdate {
 		INFO = 0;
 		WARNING = 1;
 		ERROR = 2;
-		CLOSE = 3;
+		EXIT = 3;
 	}
 	StatusType status = 1;   // Type of status update
 	string message = 2;      // Status message
