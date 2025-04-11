@@ -96,10 +96,7 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
                     println!("Client force disconnected, closing connection...");
                     break;
                 }
-                std::io::ErrorKind::WouldBlock => {
-                    // No data available yet, continue the loop immediately
-                    continue;
-                }
+                std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
                 _ => {
                     eprintln!("Error reading message: {}", err);
                     break;
@@ -108,10 +105,7 @@ fn handle_client(mut messages: Messages) -> Result<(), Box<dyn std::error::Error
         };
         // Read messages from the service
         match frame_recv.try_recv() {
-            Ok(frame) => {
-                println!("Received frame from service: {:?}", frame);
-                messages.write_message(frame)?;
-            }
+            Ok(frame) => messages.write_message(frame)?,
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => (), // do nothing, just continue
                 mpsc::TryRecvError::Disconnected => {

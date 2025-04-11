@@ -25,12 +25,12 @@ impl Service {
         }
     }
 
-    fn new_frame(&self, fill: u8) -> FrameData {
+    fn new_frame(&self, r: u8, g: u8, b: u8) -> FrameData {
         let mut frame = vec![0; self.frame_width * self.frame_height * 4]; // RGBA
         for i in 0..self.frame_width * self.frame_height {
-            frame[i * 4] = fill; // R
-            frame[i * 4 + 1] = fill; // G
-            frame[i * 4 + 2] = fill; // B
+            frame[i * 4] = r; // R
+            frame[i * 4 + 1] = g; // G
+            frame[i * 4 + 2] = b; // B
             frame[i * 4 + 3] = 255; // A
         }
         FrameData {
@@ -43,15 +43,21 @@ impl Service {
 
     pub fn main(self) -> Result<(), Box<dyn std::error::Error>> {
         println!("Service started...");
+        let mut fill = (0x00, 0x00, 0x00); // Initial color (black)
+        let mut frame_count = 0;
+        let mut last_frame_time = std::time::Instant::now();
+        const FPS: u32 = 2;
         loop {
             match self.client_receiver.try_recv() {
                 Ok(ClientEvent::StatusUpdate(status)) => {
                     println!("Received StatusUpdate: {:?}", status);
-                    self.client_sender.send(self.new_frame(0x0F))?; // Placeholder for actual frame data
                 }
                 Ok(ClientEvent::UserInput(input)) => {
                     println!("Received UserInput: {:?}", input);
-                    self.client_sender.send(self.new_frame(0xFF))?; // Placeholder for actual frame data
+                    // Random color change
+                    fill.0 = rand::random::<u8>();
+                    fill.1 = rand::random::<u8>();
+                    fill.2 = rand::random::<u8>();
                 }
                 Err(e) => match e {
                     std::sync::mpsc::TryRecvError::Empty => (), // do nothing, just continue
@@ -60,6 +66,19 @@ impl Service {
                         break;
                     }
                 },
+            }
+            // Every frame, send a new frame to the client
+            println!("Sending frame to client...");
+            self.client_sender
+                .send(self.new_frame(fill.0, fill.1, fill.2))?;
+            frame_count += 1;
+            if frame_count % FPS == 0 {
+                let elapsed = last_frame_time.elapsed();
+                let sleep_duration = std::time::Duration::from_millis(1000 / FPS as u64) - elapsed;
+                if sleep_duration > std::time::Duration::ZERO {
+                    std::thread::sleep(sleep_duration);
+                }
+                last_frame_time = std::time::Instant::now();
             }
         }
         Ok(())
