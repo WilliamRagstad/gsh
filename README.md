@@ -18,10 +18,11 @@ All rendering and graphical elements are handled by the server, while the client
 
 <div align="center">
   <h3>
-	<span style="margin: 0 30px">
+	<span>
   		What are you gonna build?
 	</span>
-	<span style="margin: 0 30px">
+	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+	<span>
 		Explore community creations!
 	</span>
   </h3>
