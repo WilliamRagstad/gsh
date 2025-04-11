@@ -3,12 +3,12 @@ package protocol;
 
 message ClientHello {
 	// Client version
-	int32 version = 2;   // Version of the client software
+	uint32 version = 2;   // Version of the client software
 }
 
 message ServerHelloAck {
 	// Server version
-	int32 version = 1;   // Version of the server software
+	uint32 version = 1;   // Version of the server software
 }
 
 // Message representing a frame of image data
@@ -36,7 +36,7 @@ message UserInput {
 		MOUSE_SCROLL = 4;
 	}
 	InputType kind = 1;   // Type of input event
-	int32 key_code = 2;   // Key code (for keyboard events)
+	uint32 key_code = 2;   // Key code (for keyboard events)
 	int32 x = 3;          // X coordinate (for mouse events)
 	int32 y = 4;          // Y coordinate (for mouse events)
 	int32 delta = 5;      // Scroll delta (for mouse scroll events)
