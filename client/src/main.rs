@@ -1,8 +1,4 @@
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-    sync::Arc,
-};
+use std::{net::TcpStream, sync::Arc};
 
 use clap::Parser;
 use rustls::{
@@ -10,7 +6,9 @@ use rustls::{
     crypto::{ring as provider, CryptoProvider},
     time_provider, ClientConnection, StreamOwned,
 };
-use shared::{prost::Message, protocol};
+use shared::{prost::Message, protocol, MessageCodec};
+
+type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -31,7 +29,7 @@ fn main() {
     let args = Args::parse();
 
     // Connect to the server
-    let mut tls_stream = match connect_tls(&args.host, args.port, args.insecure) {
+    let mut messages = match connect_tls(&args.host, args.port, args.insecure) {
         Ok(stream) => stream,
         Err(e) => {
             eprintln!("Failed to connect: {}", e);
@@ -40,7 +38,7 @@ fn main() {
     };
 
     // Finnish the handshake
-    if let Err(e) = handshake(&mut tls_stream) {
+    if let Err(e) = handshake(&mut messages) {
         eprintln!("Handshake failed: {}", e);
         return;
     }
@@ -55,7 +53,9 @@ fn main() {
 
     println!("UserInput: {:?}", user_input1);
     println!("Encoded UserInput: {:?}", user_input1.encode_to_vec());
-    tls_stream.write_all(&user_input1.encode_to_vec()).unwrap();
+    messages
+        .write_message(&user_input1.encode_to_vec())
+        .unwrap();
 
     // Close the connection
     println!("Exiting gracefully...");
@@ -66,10 +66,15 @@ fn main() {
     };
     println!("StatusUpdate: {:?}", status_close);
     println!("Encoded StatusUpdate: {:?}", status_close.encode_to_vec());
-    tls_stream.conn.send_close_notify();
-    tls_stream.write_all(&status_close.encode_to_vec()).unwrap();
-
-    tls_stream.sock.shutdown(std::net::Shutdown::Both).unwrap();
+    messages.get_stream().conn.send_close_notify();
+    messages
+        .write_message(&status_close.encode_to_vec())
+        .unwrap();
+    messages
+        .get_stream()
+        .sock
+        .shutdown(std::net::Shutdown::Both)
+        .unwrap();
     println!("Connection closed.");
 }
 
@@ -77,7 +82,7 @@ fn connect_tls(
     host: &str,
     port: u16,
     insecure: bool,
-) -> Result<StreamOwned<ClientConnection, TcpStream>, Box<dyn std::error::Error>> {
+) -> Result<Messages, Box<dyn std::error::Error>> {
     let root_store = if insecure {
         rustls::RootCertStore::empty()
     } else {
@@ -119,22 +124,18 @@ fn connect_tls(
         return Err("Handshake failed".into());
     }
 
-    Ok(tls_stream)
+    Ok(Messages::new(tls_stream))
 }
 
-fn handshake(
-    tls_stream: &mut StreamOwned<ClientConnection, TcpStream>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn handshake(messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
     let client_hello = shared::protocol::ClientHello { version: 1 };
     let mut buf: Vec<u8> = Vec::new();
     client_hello.encode(&mut buf)?;
     println!("ClientHello: {:?}", client_hello);
     println!("Encoded ClientHello: {:?}", buf);
-    tls_stream.write_all(&buf)?;
+    messages.write_message(&buf)?;
 
-    let mut response = vec![0; 1024]; // Adjust the buffer size as needed
-    let bytes_read = tls_stream.read(&mut response)?;
-    response.truncate(bytes_read); // Resize the buffer to the actual number of bytes read
+    let response = messages.read_message()?;
     println!("Received response: {:?}", &response[..]);
     let server_hello = shared::protocol::ServerHelloAck::decode(&response[..])?;
     println!("ServerHello: {:?}", server_hello);
