@@ -1,3 +1,13 @@
+<br/>
+<div align="center">
+  ————————————————
+  <br>
+  <img src="assets/logo.png" alt="Graphical Shell Logo" height="100">
+  <br>
+  ————————————————
+</div>
+<br/>
+
 # Graphical Shell
 
 Graphical Shell is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
