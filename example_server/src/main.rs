@@ -43,9 +43,11 @@ fn server() -> Result<()> {
         let mut messages = Messages::new(tls_stream);
         shared::handshake_server(&mut messages)?;
         println!("+ Client connected from {}", addr);
-        if let Err(e) = handle_client(messages) {
-            log::error!("Error handling client {}: {}", addr, e);
-        }
+        std::thread::spawn(move || {
+            if let Err(e) = handle_client(messages) {
+                log::error!("Error handling client {}: {}", addr, e);
+            }
+        });
     }
     Ok(())
 }
