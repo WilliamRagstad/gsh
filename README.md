@@ -18,13 +18,9 @@ All rendering and graphical elements are handled by the server, while the client
 
 <div align="center">
   <h3>
-	<span>
-  		What are you gonna build?
-	</span>
+  	What are you gonna build? ✨
 	&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-	<span>
-		Explore community creations!
-	</span>
+	<a href="COMMUNITY.md">Explore community creations!</a> 🖌️
   </h3>
 </div>
 
