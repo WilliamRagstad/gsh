@@ -66,5 +66,5 @@ If you want to contribute to the development of **gsh**, follow these steps:
 
 Manual system test:
 
-1. In `example_server`: `cargo run -q`
-2. In `client`: `cargo run -q -- localhost --insecure`
+1. In `examples/random_colors/`: `cargo run -q`
+2. In `client/`: `cargo run -q -- localhost --insecure`

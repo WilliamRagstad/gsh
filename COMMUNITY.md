@@ -15,4 +15,4 @@ Please create a pull request with your creation and a short description of what 
 
 | Title            | Description                              | Author          | Command                  | Source |
 | ---------------- | ---------------------------------------- | --------------- | ------------------------ | ----------- |
-| Color Randomizer | Any user interaction yields a new color! | @WilliamRagstad | `gsh unknown --insecure` | [Github](https://github.com/WilliamRagstad/gsh/tree/main/example_server) |
+| Random Colors | Any user interaction yields a new color! | @WilliamRagstad | `gsh unknown --insecure` | [Github](https://github.com/WilliamRagstad/gsh/tree/main/examples/random_colors) |
