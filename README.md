@@ -29,10 +29,10 @@ The compiled binary will be located in `target/release/gsh` and can be moved to 
 To start **gsh**, run the following command in your terminal:
 
 ```bash
-gsh 192.168.0.1  # Replace with your server's IP address
+gsh 192.168.0.1  # Replace with your server's IP address or hostname
 ```
 
-This will initiate a connection to the server at the specified IP address.
+This will initiate a connection to the server on the default port (`1122`).
 A window will open, displaying any graphical interface presented by the server application.
 You can interact with the server application through this window, and any user input will be sent to the server for processing.
 
