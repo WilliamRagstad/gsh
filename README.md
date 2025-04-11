@@ -22,12 +22,12 @@ All rendering and graphical elements are handled by the server, while the client
 <div align="center">
   <h3>
     <a href="examples/">Examples</a> 🎓
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
     <a href="COMMUNITY.md">Community Creations</a> 👪
   </h3>
   <h3>
     <a href="lib/README.md">Get Started</a> 🔨
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
     What are you gonna build? ✨
   </h3>
 </div>
