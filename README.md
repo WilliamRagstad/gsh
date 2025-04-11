@@ -62,3 +62,16 @@ You can interact with the server application through this window, and any user i
 
 Do you want to build your own server application with **gsh**?
 Read the [Server lib README](lib/README.md) for instructions on how to set up a server application that can communicate with the **gsh** client.
+
+## Development
+
+If you want to contribute to the development of **gsh**, follow these steps:
+
+- Install [`protoc`](https://github.com/protocolbuffers/protobuf/releases/) *(`shared` dependency)*
+- Install [`cmake`](https://cmake.org/download/) *(`sdl2` dependency)*
+- Clone this repository and `cd gsh`
+
+Manual system test:
+
+1. In `example_server`: `cargo run -q`
+2. In `client`: `cargo run -q -- localhost --insecure`
