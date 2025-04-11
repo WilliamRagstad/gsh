@@ -52,7 +52,7 @@ impl ClientWindow {
         // let texture_creator = self.window.texture_creator();
         // let texture = texture_creator.create_texture_from_surface(&frame.image_data)?;
         // self.window.copy(&texture, None, None)?;
-        // println!("Received frame data: {:?}", frame);
+        // log::trace!("Received frame data: {:?}", frame);
         if frame.format != FrameFormat::Rgba as i32 {
             return Err(anyhow::anyhow!("Unsupported frame format"));
         }
@@ -83,18 +83,18 @@ impl ClientWindow {
     }
 
     pub fn main(mut self) -> Result<()> {
-        println!("SDL2 Window started...");
+        log::trace!("SDL2 Window started...");
         loop {
             match self.server_receiver.try_recv() {
                 Ok(frame) => {
                     if let Err(e) = self.render_frame(&frame) {
-                        println!("Error rendering frame: {}", e);
+                        log::trace!("Error rendering frame: {}", e);
                     }
                 }
                 Err(e) => match e {
                     std::sync::mpsc::TryRecvError::Empty => (), // do nothing, just continue
                     std::sync::mpsc::TryRecvError::Disconnected => {
-                        println!("Server disconnected, exiting...");
+                        log::trace!("Server disconnected, exiting...");
                         break;
                     }
                 },
@@ -102,7 +102,7 @@ impl ClientWindow {
             for event in self.event_pump.poll_iter() {
                 match event {
                     sdl2::event::Event::Quit { .. } => {
-                        println!("Received Quit event, exiting...");
+                        log::trace!("Received Quit event, exiting...");
                         return Ok(());
                     }
                     sdl2::event::Event::KeyDown {
@@ -110,7 +110,7 @@ impl ClientWindow {
                         keymod,
                         ..
                     } => {
-                        println!("Key pressed: {:?}", key);
+                        log::trace!("Key pressed: {:?}", key);
                         // Send user input to server
                         self.server_sender.send(ClientEvent::UserInput(UserInput {
                             kind: user_input::InputType::KeyPress as i32,
@@ -129,7 +129,7 @@ impl ClientWindow {
         }
         drop(self.server_sender);
         drop(self.server_receiver);
-        println!("SDL2 Window closed.");
+        log::trace!("SDL2 Window closed.");
         Ok(())
     }
 }

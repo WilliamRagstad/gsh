@@ -25,6 +25,7 @@ struct Args {
 }
 
 fn main() {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     if let Err(e) = client(Args::parse()) {
         log::error!("Failed to start client: {}", e);
     }
@@ -44,13 +45,15 @@ fn client(args: Args) -> Result<()> {
     //     y: 1337,
     // };
 
-    // println!("UserInput: {:?}", user_input1);
+    // log::info!("UserInput: {:?}", user_input1);
     // messages.write_message(user_input1).unwrap();
 
     // Connect to the server
+    println!("Connecting to {}:{}...", args.host, args.port);
     let mut messages = network::connect_tls(&args.host, args.port, args.insecure)?;
+    println!("Successfully connected to server!");
     if let Err(e) = event_loop(&mut messages) {
-        eprintln!("Error in event loop: {}", e);
+        log::error!("Error in event loop: {}", e);
     }
     let _ = network::shutdown_tls(messages);
     Ok(())
@@ -66,7 +69,7 @@ fn event_loop(messages: &mut Messages) -> Result<()> {
     let wnd_thread = std::thread::spawn(move || {
         let wnd = window::ClientWindow::new(event_send, frame_recv);
         if let Err(e) = wnd.main() {
-            eprintln!("Window thread error: {}", e);
+            log::error!("Window thread error: {}", e);
         }
     });
 
@@ -82,18 +85,18 @@ fn event_loop(messages: &mut Messages) -> Result<()> {
                 if let Ok(frame) = protocol::FrameData::decode(&buf[..]) {
                     frame_send.send(frame)?;
                 } else {
-                    println!("Received data: {:?}", &buf[..]);
-                    println!("Unknown message type, ignoring...");
+                    log::trace!("Received data: {:?}", &buf[..]);
+                    log::trace!("Unknown message type, ignoring...");
                 }
             }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::UnexpectedEof => {
-                    println!("Client force disconnected, closing connection...");
+                    log::trace!("Client force disconnected, closing connection...");
                     break;
                 }
                 std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
                 _ => {
-                    eprintln!("Error reading message: {}", err);
+                    log::error!("Error reading message: {}", err);
                     break;
                 }
             },
@@ -103,36 +106,36 @@ fn event_loop(messages: &mut Messages) -> Result<()> {
         match event_recv.try_recv() {
             Ok(msg) => match msg {
                 shared::ClientEvent::StatusUpdate(status_update) => {
-                    println!("StatusUpdate: {:?}", status_update);
+                    log::trace!("StatusUpdate: {:?}", status_update);
                     messages.write_message(status_update)?
                 }
                 shared::ClientEvent::UserInput(user_input) => {
-                    println!("UserInput: {:?}", user_input);
+                    log::trace!("UserInput: {:?}", user_input);
                     messages.write_message(user_input)?
                 }
             },
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => (), // do nothing, just continue
                 mpsc::TryRecvError::Disconnected => {
-                    println!("Client window disconnected, exiting...");
+                    log::trace!("Client window disconnected, exiting...");
                     break;
                 }
             },
         }
     }
-    println!("Exiting event loop...");
+    log::trace!("Exiting event loop...");
     if let Err(e) = wnd_thread.join() {
-        eprintln!("Window thread error: {:?}", e);
+        log::error!("Window thread error: {:?}", e);
     }
     Ok(())
 }
 
 fn handle_status_update(su: StatusUpdate) -> bool {
     if su.kind == protocol::status_update::StatusType::Exit as i32 {
-        println!("Received graceful exit status, closing connection...");
+        log::trace!("Received graceful exit status, closing connection...");
         return false;
     } else {
-        println!("StatusUpdate: {:?}", su);
+        log::trace!("StatusUpdate: {:?}", su);
     }
     // continue the loop
     true

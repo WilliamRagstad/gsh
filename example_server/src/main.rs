@@ -18,8 +18,9 @@ type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
 const PORT: u16 = 1122;
 
 fn main() {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     if let Err(e) = server() {
-        eprintln!("Failed to start server: {}", e);
+        log::error!("Failed to start server: {}", e);
     }
 }
 
@@ -34,16 +35,16 @@ fn server() -> Result<()> {
         .with_single_cert(vec![cert.der().clone()], private_key)?;
 
     let listener = TcpListener::bind(format!("[::]:{}", PORT))?;
-    println!("Listening on {}", listener.local_addr()?);
+    println!("GSH server is listening on {}", listener.local_addr()?);
     while let Ok((mut stream, addr)) = listener.accept() {
         let mut conn = ServerConnection::new(Arc::new(config.clone()))?;
         conn.complete_io(&mut stream)?; // Complete the handshake with the stream
         let tls_stream = StreamOwned::new(conn, stream);
         let mut messages = Messages::new(tls_stream);
         shared::handshake_server(&mut messages)?;
-        println!("\nHandling new client connection from {}", addr);
+        println!("+ Client connected from {}", addr);
         if let Err(e) = handle_client(messages) {
-            eprintln!("Error handling client {}: {}", addr, e);
+            log::error!("Error handling client {}: {}", addr, e);
         }
     }
     Ok(())
@@ -59,7 +60,7 @@ fn handle_client(mut messages: Messages) -> Result<()> {
     let service_thread = std::thread::spawn(move || {
         let service = service::Service::new(frame_send, event_recv);
         if let Err(e) = service.main() {
-            eprintln!("Service thread error: {}", e);
+            log::error!("Service thread error: {}", e);
         }
     });
 
@@ -68,10 +69,10 @@ fn handle_client(mut messages: Messages) -> Result<()> {
         match messages.read_message() {
             Ok(buf) => {
                 if let Ok(status_update) = shared::protocol::StatusUpdate::decode(&buf[..]) {
-                    println!("StatusUpdate: {:?}", status_update);
+                    log::trace!("StatusUpdate: {:?}", status_update);
                     let status = status_update.kind;
                     if status == shared::protocol::status_update::StatusType::Exit as i32 {
-                        println!("Received graceful exit status, closing connection...");
+                        log::trace!("Received graceful exit status, closing connection...");
                         messages.get_stream().conn.send_close_notify();
                         messages.get_stream().flush()?;
                         messages
@@ -83,21 +84,21 @@ fn handle_client(mut messages: Messages) -> Result<()> {
                     }
                     event_send.send(shared::ClientEvent::StatusUpdate(status_update))?;
                 } else if let Ok(user_input) = shared::protocol::UserInput::decode(&buf[..]) {
-                    println!("UserInput: {:?}", user_input);
+                    log::trace!("UserInput: {:?}", user_input);
                     event_send.send(shared::ClientEvent::UserInput(user_input))?;
                 } else {
-                    println!("Received data: {:?}", &buf[..]);
-                    println!("Unknown message type, ignoring...");
+                    log::trace!("Received data: {:?}", &buf[..]);
+                    log::trace!("Unknown message type, ignoring...");
                 }
             }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::UnexpectedEof => {
-                    println!("Client force disconnected, closing connection...");
+                    log::trace!("Client force disconnected, closing connection...");
                     break;
                 }
                 std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
                 _ => {
-                    eprintln!("Error reading message: {}", err);
+                    log::error!("Error reading message: {}", err);
                     break;
                 }
             },
@@ -108,7 +109,7 @@ fn handle_client(mut messages: Messages) -> Result<()> {
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => (), // do nothing, just continue
                 mpsc::TryRecvError::Disconnected => {
-                    println!("Service disconnected, exiting...");
+                    log::trace!("Service disconnected, exiting...");
                     break;
                 }
             },
@@ -119,10 +120,11 @@ fn handle_client(mut messages: Messages) -> Result<()> {
         message: "Client disconnected".to_string(),
         code: 0,
     }))?;
-    println!("Exiting client handler loop...");
+    log::trace!("Exiting client handler loop...");
+    println!("- Client disconnected");
     // Wait for the service thread to finish
     if let Err(e) = service_thread.join() {
-        eprintln!("Service thread error: {:?}", e);
+        log::error!("Service thread error: {:?}", e);
     }
     Ok(())
 }

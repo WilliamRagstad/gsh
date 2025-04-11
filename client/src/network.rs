@@ -10,7 +10,7 @@ use std::{net::TcpStream, sync::Arc};
 pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 
 pub fn shutdown_tls(mut messages: Messages) -> Result<()> {
-    println!("Exiting gracefully...");
+    log::trace!("Exiting gracefully...");
     messages.get_stream().conn.send_close_notify();
     messages.write_message(protocol::StatusUpdate {
         kind: protocol::status_update::StatusType::Exit as i32,
@@ -21,13 +21,12 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<()> {
         .get_stream()
         .sock
         .shutdown(std::net::Shutdown::Both)?;
-    println!("Connection closed.");
+    log::trace!("Connection closed.");
     drop(messages);
     Ok(())
 }
 
 pub fn connect_tls(host: &str, port: u16, insecure: bool) -> Result<Messages> {
-    println!("Connecting to {}:{}...", host, port);
     let server_name = host.to_string().try_into()?;
     let tls_config = tls_config(insecure)?;
     let mut conn = rustls::ClientConnection::new(Arc::new(tls_config), server_name)?;
