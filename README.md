@@ -8,9 +8,24 @@ All rendering and graphical elements are handled by the server, while the client
 
 ## Features
 
-- **Graphical Enhancements**: Integrates graphical elements, allowing users to visualize and interact with server applications and services.
+- **Interactivity**: Integrates graphical elements, allowing users interact with server applications and services.
+
+- **Customizable**: Developers can create their own server applications using the provided library, enabling tailored experiences for specific use cases.
 
 - **Cross-Platform Compatibility**: Client application on Linux, macOS, and Windows, ensuring a consistent experience across different operating systems.
+
+- **Security**: TLS 1.3 encryption ensures secure communication between the client and server, protecting sensitive data and user interactions.
+
+<div align="center">
+  <h3>
+	<span style="margin: 0 30px">
+  		What are you gonna build?
+	</span>
+	<span style="margin: 0 30px">
+		Explore community creations!
+	</span>
+  </h3>
+</div>
 
 ## Installation
 
