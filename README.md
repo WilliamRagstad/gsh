@@ -1,16 +1,9 @@
-<br/>
 <div align="center">
-  ———————————————
-  <br>
-  <img src="assets/logo.png" alt="Graphical Shell Logo" height="100">
-  <br>
-  ———————————————
+  <img src="assets/logo.png" alt="Graphical Shell Logo" height="130">
 </div>
-<br/>
+<hr/>
 
-# Graphical Shell
-
-Graphical Shell is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
+**Graphical Shell** is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
 Whether you're building a personal server, a graphical Bulletin Board System (BBS), or exploring new interactive experiences, Graphical Shell provides the tools to bring your ideas to life.
 
 It shippes with a SSH-like client application (`gsh`) that allows users to connect to a server and interact with it through a graphical interface.
@@ -28,9 +21,14 @@ All rendering and graphical elements are handled by the server, while the client
 
 <div align="center">
   <h3>
-   What are you gonna build? ✨
- &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
- <a href="COMMUNITY.md">Explore community creations!</a> 🖌️
+    <a href="examples/">Examples</a> 🎓
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    <a href="COMMUNITY.md">Community Creations</a> 👪
+  </h3>
+  <h3>
+    <a href="lib/README.md">Get Started</a> 🔨
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    What are you gonna build? ✨
   </h3>
 </div>
 
