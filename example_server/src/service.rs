@@ -17,71 +17,68 @@ impl Service {
         Self {
             client_sender,
             client_receiver,
-            frame_width: 5,
-            frame_height: 5,
+            frame_width: 250,
+            frame_height: 250,
         }
     }
 
     fn new_frame(&self, r: u8, g: u8, b: u8) -> FrameData {
-        let mut frame = vec![0; self.frame_width * self.frame_height * 4]; // RGBA
+        let format = FrameFormat::Rgba;
+        let mut frame = vec![0; self.frame_width * self.frame_height * 4];
         for i in 0..self.frame_width * self.frame_height {
-            frame[i * 4] = r; // R
-            frame[i * 4 + 1] = g; // G
-            frame[i * 4 + 2] = b; // B
-            frame[i * 4 + 3] = 255; // A
+            frame[i * 4] = r;
+            frame[i * 4 + 1] = g;
+            frame[i * 4 + 2] = b;
+            frame[i * 4 + 3] = 255;
         }
         FrameData {
             image_data: frame,
             width: self.frame_width as u32,
             height: self.frame_height as u32,
-            format: FrameFormat::Rgba as i32,
+            format: format as i32,
         }
     }
 
+    fn random_color() -> (u8, u8, u8) {
+        let r = rand::random::<u8>();
+        let g = rand::random::<u8>();
+        let b = rand::random::<u8>();
+        (r, g, b)
+    }
+
     pub fn main(self) -> Result<()> {
-        println!("Service started...");
-        let mut fill = (0x00, 0x00, 0x00); // Initial color (black)
-        let mut frame_count = 0;
-        let mut last_frame_time = std::time::Instant::now();
-        const FPS: u32 = 2;
+        log::trace!("Service started...");
+        let mut fill = Self::random_color();
+        let mut changed = true;
         loop {
             match self.client_receiver.try_recv() {
                 Ok(ClientEvent::StatusUpdate(status_update)) => {
-                    println!("StatusUpdate: {:?}", status_update);
+                    log::trace!("StatusUpdate: {:?}", status_update);
                     if status_update.kind
                         == shared::protocol::status_update::StatusType::Exit as i32
                     {
-                        println!("Received graceful exit status, closing service...");
+                        log::trace!("Received graceful exit status, closing service...");
                         break;
                     }
                 }
                 Ok(ClientEvent::UserInput(input)) => {
-                    println!("Received UserInput: {:?}", input);
-                    // Random color change
-                    fill.0 = rand::random::<u8>();
-                    fill.1 = rand::random::<u8>();
-                    fill.2 = rand::random::<u8>();
+                    log::trace!("Received UserInput: {:?}", input);
+                    fill = Self::random_color();
+                    changed = true;
                 }
                 Err(e) => match e {
-                    std::sync::mpsc::TryRecvError::Empty => (), // do nothing, just continue
+                    std::sync::mpsc::TryRecvError::Empty => (),
                     std::sync::mpsc::TryRecvError::Disconnected => {
-                        println!("Client disconnected, exiting...");
+                        log::trace!("Client disconnected, exiting...");
                         break;
                     }
                 },
             }
-            // Every frame, send a new frame to the client
-            println!("Sending frame to client...");
-            self.client_sender
-                .send(self.new_frame(fill.0, fill.1, fill.2))?;
-            frame_count += 1;
-            if frame_count % FPS == 0 {
-                let elapsed = last_frame_time.elapsed();
-                let sleep_duration = std::time::Duration::from_millis(1000 / FPS as u64) - elapsed;
-                if sleep_duration > std::time::Duration::ZERO {
-                    std::thread::sleep(sleep_duration);
-                }
-                last_frame_time = std::time::Instant::now();
+            if changed {
+                log::trace!("Sending frame to client...");
+                self.client_sender
+                    .send(self.new_frame(fill.0, fill.1, fill.2))?;
+                changed = false;
             }
         }
         Ok(())
