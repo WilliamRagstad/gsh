@@ -51,11 +51,6 @@ This will initiate a connection to the server on the default port (`1122`).
 A window will open, displaying any graphical interface presented by the server application.
 You can interact with the server application through this window, and any user input will be sent to the server for processing.
 
-## Build a Server
-
-Do you want to build your own server application with **gsh**?
-Read the [Server lib README](lib/README.md) for instructions on how to set up a server application that can communicate with the **gsh** client.
-
 ## Development
 
 If you want to contribute to the development of **gsh**, follow these steps:
