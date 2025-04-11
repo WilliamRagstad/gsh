@@ -19,18 +19,13 @@ All rendering and graphical elements are handled by the server, while the client
 
 - **Security**: TLS 1.3 encryption ensures secure communication between the client and server, protecting sensitive data and user interactions.
 
-<div align="center">
-  <h3>
-    <a href="examples/">Examples</a> 🎓
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-    <a href="COMMUNITY.md">Community Creations</a> 👪
-  </h3>
-  <h3>
-    <a href="lib/README.md">Get Started</a> 🔨
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-    What are you gonna build? ✨
-  </h3>
-</div>
+### What are you gonna build? ✨
+
+- ### [Get Started](lib/README.md) 🔨
+
+- ### [Examples](examples/) 🎓
+
+- ### [Community](COMMUNITY.md) 👪
 
 ## Installation
 
