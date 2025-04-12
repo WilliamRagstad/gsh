@@ -45,7 +45,12 @@ fn server() -> Result<()> {
         conn.complete_io(&mut stream)?; // Complete the handshake with the stream
         let tls_stream = StreamOwned::new(conn, stream);
         let mut messages = Messages::new(tls_stream);
-        let client = shared::handshake_server(&mut messages, &[shared::PROTOCOL_VERSION], None)?;
+        let initial_window_settings = service::Service::initial_window_settings();
+        let client = shared::handshake_server(
+            &mut messages,
+            &[shared::PROTOCOL_VERSION],
+            Some(initial_window_settings),
+        )?;
         let os: protocol::client_hello::Os = client
             .os
             .try_into()

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use shared::protocol::{frame_data::FrameFormat, FrameData};
+use shared::protocol::{window_settings, WindowSettings};
 use shared::ClientEvent;
 
 pub struct Service {
@@ -10,6 +11,9 @@ pub struct Service {
 }
 
 impl Service {
+    const FRAME_WIDTH: usize = 250;
+    const FRAME_HEIGHT: usize = 250;
+
     pub fn new(
         client_sender: std::sync::mpsc::Sender<FrameData>,
         client_receiver: std::sync::mpsc::Receiver<ClientEvent>,
@@ -17,8 +21,23 @@ impl Service {
         Self {
             client_sender,
             client_receiver,
-            frame_width: 250,
-            frame_height: 250,
+            frame_width: Self::FRAME_WIDTH,
+            frame_height: Self::FRAME_HEIGHT,
+        }
+    }
+
+    pub fn initial_window_settings() -> WindowSettings {
+        WindowSettings {
+            id: 0,
+            title: String::from("Colors!"),
+            initial_mode: window_settings::WindowMode::Windowed as i32,
+            width: Self::FRAME_WIDTH as u32,
+            height: Self::FRAME_HEIGHT as u32,
+            always_on_top: false,
+            allow_resize: false,
+            allow_fullscreen: false,
+            allow_minimize: true,
+            allow_maximize: false,
         }
     }
 

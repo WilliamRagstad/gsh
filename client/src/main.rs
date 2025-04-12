@@ -3,7 +3,7 @@ use clap::Parser;
 use network::Messages;
 use shared::{
     prost::Message,
-    protocol::{self, StatusUpdate},
+    protocol::{self, StatusUpdate, WindowSettings},
 };
 use std::sync::mpsc;
 
@@ -50,16 +50,21 @@ fn client(args: Args) -> Result<()> {
 
     // Connect to the server
     println!("Connecting to {}:{}...", args.host, args.port);
-    let mut messages = network::connect_tls(&args.host, args.port, args.insecure)?;
+    let (initial_window_settings, mut messages) =
+        network::connect_tls(&args.host, args.port, args.insecure)?;
     println!("Successfully connected to server!");
-    if let Err(e) = event_loop(&mut messages) {
+    if let Err(e) = event_loop(&mut messages, initial_window_settings, args.host) {
         log::error!("Error in event loop: {}", e);
     }
     let _ = network::shutdown_tls(messages);
     Ok(())
 }
 
-fn event_loop(messages: &mut Messages) -> Result<()> {
+fn event_loop(
+    messages: &mut Messages,
+    initial_window_settings: Option<WindowSettings>,
+    host: String,
+) -> Result<()> {
     // Set the socket to non-blocking mode
     // All calls to `read_message` will return immediately, even if no data is available
     messages.get_stream().sock.set_nonblocking(true)?;
@@ -67,7 +72,7 @@ fn event_loop(messages: &mut Messages) -> Result<()> {
     let (event_send, event_recv) = mpsc::channel::<shared::ClientEvent>();
     let (frame_send, frame_recv) = mpsc::channel::<shared::protocol::FrameData>();
     let wnd_thread = std::thread::spawn(move || {
-        let wnd = window::ClientWindow::new(event_send, frame_recv);
+        let wnd = window::ClientWindow::new(event_send, frame_recv, initial_window_settings, host);
         if let Err(e) = wnd.main() {
             log::error!("Window thread error: {}", e);
         }

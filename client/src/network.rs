@@ -4,7 +4,10 @@ use rustls::{
     crypto::{ring as provider, CryptoProvider},
     time_provider, ClientConnection, StreamOwned,
 };
-use shared::{protocol, MessageCodec};
+use shared::{
+    protocol::{self, WindowSettings},
+    MessageCodec,
+};
 use std::{net::TcpStream, sync::Arc};
 
 pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
@@ -26,7 +29,11 @@ pub fn shutdown_tls(mut messages: Messages) -> Result<()> {
     Ok(())
 }
 
-pub fn connect_tls(host: &str, port: u16, insecure: bool) -> Result<Messages> {
+pub fn connect_tls(
+    host: &str,
+    port: u16,
+    insecure: bool,
+) -> Result<(Option<WindowSettings>, Messages)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = tls_config(insecure)?;
     let mut conn = rustls::ClientConnection::new(Arc::new(tls_config), server_name)?;
@@ -39,8 +46,8 @@ pub fn connect_tls(host: &str, port: u16, insecure: bool) -> Result<Messages> {
         return Err(anyhow::anyhow!("Handshake failed"));
     }
     let mut messages = Messages::new(tls_stream);
-    shared::handshake_client(&mut messages)?;
-    Ok(messages)
+    let initial_window_settings = shared::handshake_client(&mut messages)?;
+    Ok((initial_window_settings, messages))
 }
 
 fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {

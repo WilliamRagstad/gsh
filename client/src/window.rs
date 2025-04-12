@@ -1,8 +1,8 @@
 use anyhow::Result;
 use sdl2::rect::Rect;
 use sdl2::{pixels::Color, render};
-use shared::protocol::user_input;
 use shared::protocol::{frame_data::FrameFormat, FrameData, UserInput};
+use shared::protocol::{user_input, WindowSettings};
 use shared::ClientEvent;
 
 /// SDL2 Window management, event handling and message passing to protocol channel
@@ -17,20 +17,43 @@ pub struct ClientWindow {
 }
 
 impl ClientWindow {
+    const DEAFULT_WIDTH: u32 = 800;
+    const DEAFULT_HEIGHT: u32 = 600;
+    const DEFAULT_TITLE_PREFIX: &'static str = "GSH Client";
+    const DEFAULT_ALLOW_RESIZE: bool = true;
+
     pub fn new(
         server_sender: std::sync::mpsc::Sender<ClientEvent>,
         server_receiver: std::sync::mpsc::Receiver<FrameData>,
+        initial_window_settings: Option<WindowSettings>,
+        host: String,
     ) -> Self {
+        let (title, width, height, allow_resize) = if let Some(iws) = initial_window_settings {
+            (iws.title, iws.width, iws.height, iws.allow_resize)
+        } else {
+            (
+                format!("{} {}", Self::DEFAULT_TITLE_PREFIX, host),
+                Self::DEAFULT_WIDTH,
+                Self::DEAFULT_HEIGHT,
+                Self::DEFAULT_ALLOW_RESIZE,
+            )
+        };
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem
-            .window("GSH SDL2 Window", 800, 600)
-            .position_centered()
-            .resizable()
-            // .opengl()
-            // .allow_highdpi()
-            .build()
-            .unwrap();
+        let mut window = video_subsystem.window(&title, width, height);
+        window.position_centered();
+        // .resizable()
+        // .opengl()
+        // .allow_highdpi()
+        // .build()
+        // .unwrap();
+        if allow_resize {
+            window.resizable();
+        }
+        let window = window.build().unwrap_or_else(|err| {
+            panic!("Failed to create window: {}", err);
+        });
+
         let canvas = window.into_canvas().build().unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
 

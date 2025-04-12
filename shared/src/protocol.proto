@@ -29,19 +29,20 @@ message ServerHelloAck {
 message WindowSettings {
 	enum WindowMode {
 		FULLSCREEN = 0;
-		WINDOWED = 1;
-		BORDERLESS = 2;
+		BORDERLESS = 1;
+		WINDOWED = 2;
+		WINDOWED_MAXIMIZED = 3;
 	}
-	WindowMode mode = 1; // Window mode (fullscreen, windowed, borderless)
-	uint32 width = 2;    // Width of the window in pixels
-	uint32 height = 3;   // Height of the window in pixels
-	string title = 4;    // Title of the window
-	bool resizable = 5;  // Whether the window is resizable
-	bool visible = 6;    // Whether the window is visible
-	bool always_on_top = 7; // Whether the window is always on top
-	bool closeable = 8;  // Whether the window can be closed
-	bool minimizable = 9; // Whether the window can be minimized
-	bool maximizable = 10; // Whether the window can be maximized
+	uint32 id = 1;       // Unique identifier for the window
+	WindowMode initial_mode = 2; // Window mode (fullscreen, windowed, borderless)
+	uint32 width = 3;    // Width of the window in pixels
+	uint32 height = 4;   // Height of the window in pixels
+	string title = 5;    // Title of the window
+	bool always_on_top = 6; // Whether the window is always on top
+	bool allow_minimize = 8; // Whether the window can be minimized
+	bool allow_maximize = 9; // Whether the window can be maximized
+	bool allow_resize = 10; // Whether the window can be resized
+	bool allow_fullscreen = 11; // Whether the window can be fullscreened
 }
 
 // Message representing a frame of image data
