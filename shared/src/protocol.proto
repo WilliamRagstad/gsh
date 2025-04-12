@@ -9,7 +9,7 @@ message ClientHello {
 		WINDOWS = 1;
 		LINUX = 2;
 		MACOS = 3;
-        IOS = 4;
+		IOS = 4;
 		ANDROID = 5;
 		WEB = 6;
 	}
