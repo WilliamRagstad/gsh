@@ -1,12 +1,47 @@
 syntax = "proto3";
 package protocol;
 
+// Initial connection message from the client to the server
+// Client -> Server
 message ClientHello {
+	enum OS {
+		UNKNOWN = 0;
+		WINDOWS = 1;
+		LINUX = 2;
+		MACOS = 3;
+        IOS = 4;
+		ANDROID = 5;
+		WEB = 6;
+	}
 	uint32 version = 2;
+	OS os = 3;           // Operating system of the client
+	string os_version = 4; // Version of the operating system
 }
 
+// Acknowledgment message from the server to the client
+// Server -> Client
 message ServerHelloAck {
-	uint32 version = 1;
+	WindowSettings initial_window_settings = 1; // Window settings for the client
+}
+
+// Window settings message, used to configure the window properties for the client.
+// Server -> Client
+message WindowSettings {
+	enum WindowMode {
+		FULLSCREEN = 0;
+		WINDOWED = 1;
+		BORDERLESS = 2;
+	}
+	WindowMode mode = 1; // Window mode (fullscreen, windowed, borderless)
+	uint32 width = 2;    // Width of the window in pixels
+	uint32 height = 3;   // Height of the window in pixels
+	string title = 4;    // Title of the window
+	bool resizable = 5;  // Whether the window is resizable
+	bool visible = 6;    // Whether the window is visible
+	bool always_on_top = 7; // Whether the window is always on top
+	bool closeable = 8;  // Whether the window can be closed
+	bool minimizable = 9; // Whether the window can be minimized
+	bool maximizable = 10; // Whether the window can be maximized
 }
 
 // Message representing a frame of image data

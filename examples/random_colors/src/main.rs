@@ -5,7 +5,11 @@ use rustls::{
     server::ServerConfig,
     ServerConnection, StreamOwned,
 };
-use shared::{prost::Message, protocol::StatusUpdate, MessageCodec};
+use shared::{
+    prost::Message,
+    protocol::{self, StatusUpdate},
+    MessageCodec,
+};
 use std::{
     io::Write,
     net::{TcpListener, TcpStream},
@@ -41,8 +45,15 @@ fn server() -> Result<()> {
         conn.complete_io(&mut stream)?; // Complete the handshake with the stream
         let tls_stream = StreamOwned::new(conn, stream);
         let mut messages = Messages::new(tls_stream);
-        shared::handshake_server(&mut messages)?;
-        println!("+ Client connected from {}", addr);
+        let client = shared::handshake_server(&mut messages, &[shared::PROTOCOL_VERSION], None)?;
+        let os: protocol::client_hello::Os = client
+            .os
+            .try_into()
+            .unwrap_or(protocol::client_hello::Os::Unknown);
+        println!(
+            "+ Client connected from {} on {:?} version {}",
+            addr, os, client.os_version
+        );
         std::thread::spawn(move || {
             if let Err(e) = handle_client(messages) {
                 log::error!("Error handling client {}: {}", addr, e);

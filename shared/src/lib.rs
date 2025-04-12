@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 
 pub use prost;
 use prost::Message;
+use protocol::ClientHello;
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
@@ -68,55 +69,59 @@ impl<S: Read + Write + Send> MessageCodec<S> {
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_client<S>(messages: &mut MessageCodec<S>) -> std::io::Result<()>
+pub fn handshake_client<S>(
+    messages: &mut MessageCodec<S>,
+) -> std::io::Result<Option<protocol::WindowSettings>>
 where
     S: Read + Write + Send,
 {
+    let os = match std::env::consts::OS {
+        "linux" => protocol::client_hello::Os::Linux,
+        "windows" => protocol::client_hello::Os::Windows,
+        "macos" => protocol::client_hello::Os::Macos,
+        _ => protocol::client_hello::Os::Unknown,
+    } as i32;
+    let os_version = os_info::get().version().to_string();
     messages.write_message(protocol::ClientHello {
         version: PROTOCOL_VERSION,
+        os,
+        os_version,
     })?;
 
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
 
-    if server_hello.version != PROTOCOL_VERSION {
-        messages.write_message(protocol::StatusUpdate {
-            kind: protocol::status_update::StatusType::Exit as i32,
-            message: "Invalid server version".to_string(),
-            code: 0,
-        })?;
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Invalid server version",
-        ));
-    }
-
-    Ok(())
+    Ok(server_hello.initial_window_settings)
 }
 
 /// Handshake function for the **server side**.
 /// It reads a `ClientHello` message and sends a `ServerHelloAck` response.
 /// If the client version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_server<S>(messages: &mut MessageCodec<S>) -> std::io::Result<()>
+pub fn handshake_server<S>(
+    messages: &mut MessageCodec<S>,
+    supported_protocol_versions: &[u32],
+    initial_window_settings: Option<protocol::WindowSettings>,
+) -> std::io::Result<ClientHello>
 where
     S: Read + Write + Send,
 {
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
 
-    if client_hello.version != PROTOCOL_VERSION {
+    if !supported_protocol_versions.contains(&client_hello.version) {
+        let msg = format!(
+            "Unsupported client protocol version: {}. Supported versions: {:?}",
+            client_hello.version, supported_protocol_versions
+        );
         messages.write_message(protocol::StatusUpdate {
             kind: protocol::status_update::StatusType::Exit as i32,
-            message: "Invalid client version".to_string(),
+            message: msg.clone(),
             code: 0,
         })?;
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Invalid client version",
-        ));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
     }
 
     messages.write_message(protocol::ServerHelloAck {
-        version: PROTOCOL_VERSION,
+        initial_window_settings,
     })?;
 
-    Ok(())
+    Ok(client_hello)
 }

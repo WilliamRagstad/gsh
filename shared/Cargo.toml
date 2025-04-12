@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 prost = "0.13.5"
+os_info = "3.10.0"
 
 [build-dependencies]
 prost-build = "0.13.5"
