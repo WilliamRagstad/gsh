@@ -2,7 +2,7 @@ use anyhow::Result;
 use sdl2::rect::Rect;
 use sdl2::{pixels::Color, render};
 use shared::protocol::{frame_data::FrameFormat, FrameData, UserInput};
-use shared::protocol::{user_input, WindowSettings};
+use shared::protocol::{user_input, window_settings, WindowSettings};
 use shared::ClientEvent;
 
 /// SDL2 Window management, event handling and message passing to protocol channel
@@ -22,33 +22,45 @@ impl ClientWindow {
     const DEFAULT_TITLE_PREFIX: &'static str = "GSH Client";
     const DEFAULT_ALLOW_RESIZE: bool = true;
 
+    fn load_settings(
+        initial_window_settings: Option<WindowSettings>,
+        host: String,
+    ) -> WindowSettings {
+        if let Some(iws) = initial_window_settings {
+            iws
+        } else {
+            WindowSettings {
+                id: 0,
+                title: format!("{} {}", Self::DEFAULT_TITLE_PREFIX, host),
+                initial_mode: window_settings::WindowMode::Windowed as i32,
+                width: Self::DEAFULT_WIDTH,
+                height: Self::DEAFULT_HEIGHT,
+                always_on_top: false,
+                allow_resize: Self::DEFAULT_ALLOW_RESIZE,
+            }
+        }
+    }
+
     pub fn new(
         server_sender: std::sync::mpsc::Sender<ClientEvent>,
         server_receiver: std::sync::mpsc::Receiver<FrameData>,
         initial_window_settings: Option<WindowSettings>,
         host: String,
     ) -> Self {
-        let (title, width, height, allow_resize) = if let Some(iws) = initial_window_settings {
-            (iws.title, iws.width, iws.height, iws.allow_resize)
-        } else {
-            (
-                format!("{} {}", Self::DEFAULT_TITLE_PREFIX, host),
-                Self::DEAFULT_WIDTH,
-                Self::DEAFULT_HEIGHT,
-                Self::DEFAULT_ALLOW_RESIZE,
-            )
-        };
+        let iws = Self::load_settings(initial_window_settings, host);
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let mut window = video_subsystem.window(&title, width, height);
+        let mut window = video_subsystem.window(&iws.title, iws.width, iws.height);
         window.position_centered();
-        // .resizable()
-        // .opengl()
-        // .allow_highdpi()
-        // .build()
-        // .unwrap();
-        if allow_resize {
+        if iws.allow_resize {
             window.resizable();
+        }
+        if iws.initial_mode == window_settings::WindowMode::Fullscreen as i32 {
+            window.fullscreen();
+        } else if iws.initial_mode == window_settings::WindowMode::Borderless as i32 {
+            window.borderless();
+        } else if iws.initial_mode == window_settings::WindowMode::WindowedMaximized as i32 {
+            window.maximized();
         }
         let window = window.build().unwrap_or_else(|err| {
             panic!("Failed to create window: {}", err);

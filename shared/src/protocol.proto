@@ -39,10 +39,7 @@ message WindowSettings {
 	uint32 height = 4;   // Height of the window in pixels
 	string title = 5;    // Title of the window
 	bool always_on_top = 6; // Whether the window is always on top
-	bool allow_minimize = 8; // Whether the window can be minimized
-	bool allow_maximize = 9; // Whether the window can be maximized
-	bool allow_resize = 10; // Whether the window can be resized
-	bool allow_fullscreen = 11; // Whether the window can be fullscreened
+	bool allow_resize = 7; // Whether the window can be resized
 }
 
 // Message representing a frame of image data

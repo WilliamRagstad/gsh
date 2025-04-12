@@ -35,9 +35,6 @@ impl Service {
             height: Self::FRAME_HEIGHT as u32,
             always_on_top: false,
             allow_resize: false,
-            allow_fullscreen: false,
-            allow_minimize: true,
-            allow_maximize: false,
         }
     }
 
