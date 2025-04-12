@@ -56,7 +56,7 @@ fn server() -> Result<()> {
             .try_into()
             .unwrap_or(protocol::client_hello::Os::Unknown);
         println!(
-            "+ Client connected from {} on {:?} version {}",
+            "+ Client connected from {} on {:?} {}",
             addr, os, client.os_version
         );
         std::thread::spawn(move || {
