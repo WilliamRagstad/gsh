@@ -9,10 +9,20 @@ use shared::{
 /// The service is responsible for handling client events and sending frames to the client.
 pub trait SimpleService {
     fn new(frames: Sender<FrameData>, events: Receiver<ClientEvent>) -> Self;
+
+    /// Initial window setting preferences for the service.\
+    /// This is used in the `handshake_server` function to set the initial window settings for the client.
+    /// This is optional and can be overridden by the service implementation.
+    /// If not provided, the client may use its own default settings.
     fn initial_window_settings() -> Option<WindowSettings> {
         None
     }
-    fn main(self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Main event loop for the service.\
+    /// This is running in a separate thread, handling client events and sending frames back to the client.
+    fn main(self) -> Result<(), Box<dyn std::error::Error>>
+    where
+        Self: Sized;
 }
 
 /// A trait extension for `SimpleService` that provides additional default functionality:
@@ -21,13 +31,25 @@ pub trait SimpleService {
 /// - `tick` method to perform periodic tasks.
 /// - `handle_event` method to handle client events.
 pub trait SimpleServiceExt: SimpleService {
+    /// Get the event receiver for the service.\
+    /// This is used in the default `main` implementation to receive events from the client.
     fn events(&self) -> &Receiver<ClientEvent>;
+
+    /// Handle periodic tasks in the service.\
+    /// This is called each iteration in the default `main` implementation event loop to perform any necessary updates.
     fn tick(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Handle client events in the service.\
+    /// This is called for each `ClientEvent` received in the default `main` implementation event loop.
     fn handle_event(&mut self, event: ClientEvent) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Main event loop for the service.\
+    /// This is running in a separate thread, handling client events and sending frames back to the client.
     fn main(mut self) -> Result<(), Box<dyn std::error::Error>>
     where
         Self: Sized,
     {
+        log::trace!("Starting service main loop...");
         loop {
             match self.events().try_recv() {
                 Ok(ClientEvent::StatusUpdate(status_update)) => {
@@ -50,6 +72,7 @@ pub trait SimpleServiceExt: SimpleService {
             }
             self.tick()?;
         }
+        log::trace!("Service main loop exited.");
         Ok(())
     }
 }

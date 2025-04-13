@@ -4,14 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# shared = { path = "../../shared" }
-# rustls = { version = "0.23.26", features = [
-# 	"ring",
-# 	"std",
-# ], default-features = false }
-# rcgen = "0.13.2"
 libgsh = { path = "../../libgsh" }
 rand = "0.9.0"
 log = "0.4.27"
 env_logger = "0.11.8"
-anyhow = "1.0.97"
