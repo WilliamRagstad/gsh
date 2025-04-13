@@ -8,6 +8,8 @@ pub struct Service {
     client_receiver: std::sync::mpsc::Receiver<ClientEvent>,
     frame_width: usize,
     frame_height: usize,
+    fill_color: (u8, u8, u8),
+    changed_color: bool,
 }
 
 impl Service {
@@ -23,6 +25,8 @@ impl Service {
             client_receiver,
             frame_width: Self::FRAME_WIDTH,
             frame_height: Self::FRAME_HEIGHT,
+            fill_color: Self::random_color(),
+            changed_color: true,
         }
     }
 
@@ -38,13 +42,13 @@ impl Service {
         }
     }
 
-    fn new_frame(&self, r: u8, g: u8, b: u8) -> FrameData {
+    fn new_frame(&self) -> FrameData {
         let format = FrameFormat::Rgba;
         let mut frame = vec![0; self.frame_width * self.frame_height * 4];
         for i in 0..self.frame_width * self.frame_height {
-            frame[i * 4] = r;
-            frame[i * 4 + 1] = g;
-            frame[i * 4 + 2] = b;
+            frame[i * 4] = self.fill_color.0; // Red
+            frame[i * 4 + 1] = self.fill_color.1; // Green
+            frame[i * 4 + 2] = self.fill_color.2; // Blue
             frame[i * 4 + 3] = 255;
         }
         FrameData {
@@ -62,9 +66,16 @@ impl Service {
         (r, g, b)
     }
 
-    pub fn main(self) -> Result<()> {
+    fn handle_event(&mut self, event: ClientEvent) {
+        if let ClientEvent::UserInput(input) = event {
+            log::trace!("UserInput: {:?}", input);
+            self.fill_color = Self::random_color();
+            self.changed_color = true;
+        }
+    }
+
+    pub fn main(mut self) -> Result<()> {
         log::trace!("Service started...");
-        let mut fill = Self::random_color();
         let mut changed = true;
         loop {
             match self.client_receiver.try_recv() {
@@ -79,7 +90,7 @@ impl Service {
                 }
                 Ok(ClientEvent::UserInput(input)) => {
                     log::trace!("Received UserInput: {:?}", input);
-                    fill = Self::random_color();
+                    self.fill_color = Self::random_color();
                     changed = true;
                 }
                 Err(e) => match e {
@@ -92,8 +103,7 @@ impl Service {
             }
             if changed {
                 log::trace!("Sending frame to client...");
-                self.client_sender
-                    .send(self.new_frame(fill.0, fill.1, fill.2))?;
+                self.client_sender.send(self.new_frame())?;
                 changed = false;
             }
         }
