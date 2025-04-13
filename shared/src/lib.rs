@@ -87,9 +87,7 @@ where
         os,
         os_version,
     })?;
-
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
-
     Ok(server_hello.initial_window_settings)
 }
 
@@ -105,7 +103,6 @@ where
     S: Read + Write + Send,
 {
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
-
     if !supported_protocol_versions.contains(&client_hello.version) {
         let msg = format!(
             "Unsupported client protocol version: {}. Supported versions: {:?}",
@@ -118,10 +115,8 @@ where
         })?;
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
     }
-
     messages.write_message(protocol::ServerHelloAck {
         initial_window_settings,
     })?;
-
     Ok(client_hello)
 }
