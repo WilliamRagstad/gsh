@@ -1,6 +1,6 @@
-# gsh lib
+# libgsh
 
-The **gsh lib** is a foundational library for building server applications that interact seamlessly with the **gsh** client. It provides essential tools and abstractions to enable efficient communication, data handling, and graphical interface integration between the server and the **gsh** graphical shell.
+This is a foundational library for building server applications that interact seamlessly with the **gsh** client. It provides essential tools and abstractions to enable efficient communication, data handling, and graphical interface integration between the server and the **gsh** graphical shell.
 
 ## Build a Server
 

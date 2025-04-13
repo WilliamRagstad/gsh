@@ -21,7 +21,7 @@ All rendering and graphical elements are handled by the server, while the client
 
 ### What are you gonna build? ✨
 
-- ### [Get Started](lib/README.md) 🔨
+- ### [Get Started](libgsh/README.md) 🔨
 
 - ### [Examples](examples/) 🎓
 
