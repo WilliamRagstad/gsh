@@ -2,17 +2,17 @@
 
 This is a place for the community to share their custom creations built using the **gsh** library, such as:
 
-- Graphical applications
-- Online Singleplayer Games
-- Online Multiplayer Games
-- Graphical BBS (Bulletin Board System)
-- Personal home pages
+- Personal pages
+- Online games for single players
+- Online games for multiple players
+- Graphical Bulletin Board Systems (BBS)
+- Graphical applications interfaces
 - Interactive experiences
-- And more!
+- *And much more!*
 
 Do you have a creation you want to share with the community?
 Please create a pull request with your creation and a short description of what it does and how to use it.
 
-| Title         | Description                              | Author          | Command                  | Source                                                                    |
-| ------------- | ---------------------------------------- | --------------- | ------------------------ | ------------------------------------------------------------------------- |
-| Random Colors | Any user interaction yields a new color! | @WilliamRagstad | `gsh unknown --insecure` | [Github](https://github.com/WilliamRagstad/gsh/tree/main/examples/colors) |
+| Title   | Description                 | Author          | Category   | Host      | Insecure | Source                                                                    |
+| ------- | --------------------------- | --------------- | ---------- | --------- | -------- | ------------------------------------------------------------------------- |
+| Colors! | Generate new random colors! | @WilliamRagstad | **Visual** | `?.?.?.?` | **Yes**  | [Github](https://github.com/WilliamRagstad/gsh/tree/main/examples/colors) |
