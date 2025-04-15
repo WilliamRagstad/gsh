@@ -63,7 +63,7 @@ If you want to contribute to the development of **gsh**, follow these steps:
 - Install [`cmake`](https://cmake.org/download/) version 3.31.7 *(`sdl2` dependency)*
 - Clone this repository and `cd gsh`
 
-Manual system test:
+Manual system test for the `colors` example:
 
-1. In `examples/random_colors/`: `cargo run -q`
+1. In `examples/colors/`: `cargo run -q`
 2. In `client/`: `cargo run -q -- localhost --insecure`
