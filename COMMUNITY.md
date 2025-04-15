@@ -13,6 +13,6 @@ This is a place for the community to share their custom creations built using th
 Do you have a creation you want to share with the community?
 Please create a pull request with your creation and a short description of what it does and how to use it.
 
-| Title            | Description                              | Author          | Command                  | Source |
-| ---------------- | ---------------------------------------- | --------------- | ------------------------ | ----------- |
+| Title         | Description                              | Author          | Command                  | Source                                                                    |
+| ------------- | ---------------------------------------- | --------------- | ------------------------ | ------------------------------------------------------------------------- |
 | Random Colors | Any user interaction yields a new color! | @WilliamRagstad | `gsh unknown --insecure` | [Github](https://github.com/WilliamRagstad/gsh/tree/main/examples/colors) |
