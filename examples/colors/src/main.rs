@@ -1,4 +1,4 @@
-use env_logger::{init_from_env, Env};
+use env_logger::Env;
 use libgsh::{
     cert,
     rustls::ServerConfig,
@@ -15,7 +15,12 @@ use log::trace;
 use rand::random;
 
 fn main() {
-    init_from_env(Env::default().default_filter_or("info"));
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .format_line_number(true)
+        .format_file(true)
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
     let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
     let config = ServerConfig::builder()
         .with_no_client_auth()

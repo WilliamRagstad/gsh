@@ -25,7 +25,10 @@ struct Args {
 }
 
 fn main() {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_line_number(true)
+        .format_timestamp(None)
+        .init();
     let args = Args::parse();
 
     println!("Connecting to {}:{}...", args.host, args.port);
