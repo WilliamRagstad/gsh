@@ -1,65 +1,85 @@
 use anyhow::Result;
 use sdl2::rect::Rect;
 use sdl2::{pixels::Color, render};
-use shared::protocol::{frame_data::FrameFormat, FrameData, UserInput};
 use shared::protocol::{user_input, window_settings, WindowSettings};
+use shared::protocol::{Frame, UserInput};
 use shared::ClientEvent;
+use std::collections::HashMap;
+use std::sync::mpsc;
+
+pub type WindowsMap = HashMap<u32, WindowHnd>;
+pub struct WindowHnd {
+    // wnd: window::ClientWindow,
+    pub thread: std::thread::JoinHandle<()>,
+    pub event_recv: mpsc::Receiver<ClientEvent>,
+    pub frame_send: mpsc::Sender<Frame>,
+}
 
 /// SDL2 Window management, event handling and message passing to protocol channel
 pub struct ClientWindow {
-    _sdl_context: sdl2::Sdl,
-    _video_subsystem: sdl2::VideoSubsystem,
+    settings: WindowSettings,
+    // _sdl_context: sdl2::Sdl,
+    // video_subsystem: sdl2::VideoSubsystem,
     // window: sdl2::video::Window,
     canvas: render::Canvas<sdl2::video::Window>,
     event_pump: sdl2::EventPump,
-    server_sender: std::sync::mpsc::Sender<ClientEvent>,
-    server_receiver: std::sync::mpsc::Receiver<FrameData>,
+    server_sender: mpsc::Sender<ClientEvent>,
+    server_receiver: mpsc::Receiver<Frame>,
 }
 
 impl ClientWindow {
+    pub const DEFAULT_WINDOW_ID: u32 = 0;
     const DEAFULT_WIDTH: u32 = 800;
     const DEAFULT_HEIGHT: u32 = 600;
     const DEFAULT_TITLE_PREFIX: &'static str = "GSH Client";
     const DEFAULT_ALLOW_RESIZE: bool = true;
 
-    fn load_settings(
-        initial_window_settings: Option<WindowSettings>,
-        host: String,
-    ) -> WindowSettings {
-        if let Some(iws) = initial_window_settings {
-            iws
-        } else {
-            WindowSettings {
-                id: 0,
-                title: format!("{} {}", Self::DEFAULT_TITLE_PREFIX, host),
-                initial_mode: window_settings::WindowMode::Windowed as i32,
-                width: Self::DEAFULT_WIDTH,
-                height: Self::DEAFULT_HEIGHT,
-                always_on_top: false,
-                allow_resize: Self::DEFAULT_ALLOW_RESIZE,
-            }
+    fn default_settings(host: String) -> WindowSettings {
+        WindowSettings {
+            window_id: Self::DEFAULT_WINDOW_ID,
+            title: format!("{} {}", Self::DEFAULT_TITLE_PREFIX, host),
+            initial_mode: window_settings::WindowMode::Windowed as i32,
+            width: Self::DEAFULT_WIDTH,
+            height: Self::DEAFULT_HEIGHT,
+            always_on_top: false,
+            allow_resize: Self::DEFAULT_ALLOW_RESIZE,
+            resize_frame: false,
+            anchor: window_settings::FrameAnchor::TopLeft as i32,
         }
     }
 
-    pub fn new(
-        server_sender: std::sync::mpsc::Sender<ClientEvent>,
-        server_receiver: std::sync::mpsc::Receiver<FrameData>,
-        initial_window_settings: Option<WindowSettings>,
+    pub fn default_new(
+        server_sender: mpsc::Sender<ClientEvent>,
+        server_receiver: mpsc::Receiver<Frame>,
         host: String,
+        sdl_context: &sdl2::Sdl,
     ) -> Self {
-        let iws = Self::load_settings(initial_window_settings, host);
-        let sdl_context = sdl2::init().unwrap();
+        Self::new(
+            server_sender,
+            server_receiver,
+            Self::default_settings(host),
+            sdl_context,
+        )
+    }
+
+    pub fn new(
+        server_sender: mpsc::Sender<ClientEvent>,
+        server_receiver: mpsc::Receiver<Frame>,
+        settings: WindowSettings,
+        sdl_context: &sdl2::Sdl,
+    ) -> Self {
+        // let sdl_context = sdl();
         let video_subsystem = sdl_context.video().unwrap();
-        let mut window = video_subsystem.window(&iws.title, iws.width, iws.height);
+        let mut window = video_subsystem.window(&settings.title, settings.width, settings.height);
         window.position_centered();
-        if iws.allow_resize {
+        if settings.allow_resize {
             window.resizable();
         }
-        if iws.initial_mode == window_settings::WindowMode::Fullscreen as i32 {
+        if settings.initial_mode == window_settings::WindowMode::Fullscreen as i32 {
             window.fullscreen();
-        } else if iws.initial_mode == window_settings::WindowMode::Borderless as i32 {
+        } else if settings.initial_mode == window_settings::WindowMode::Borderless as i32 {
             window.borderless();
-        } else if iws.initial_mode == window_settings::WindowMode::WindowedMaximized as i32 {
+        } else if settings.initial_mode == window_settings::WindowMode::WindowedMaximized as i32 {
             window.maximized();
         }
         let window = window.build().unwrap_or_else(|err| {
@@ -70,8 +90,8 @@ impl ClientWindow {
         let event_pump = sdl_context.event_pump().unwrap();
 
         Self {
-            _sdl_context: sdl_context,
-            _video_subsystem: video_subsystem,
+            settings,
+            // video_subsystem,
             canvas,
             event_pump,
             server_sender,
@@ -79,7 +99,7 @@ impl ClientWindow {
         }
     }
 
-    fn render_frame(&mut self, frame: &FrameData) -> Result<()> {
+    fn render_frame(&mut self, frame: &Frame) -> Result<()> {
         // Here you would typically update the window with the new frame data
         // For example, using SDL2 to create a texture and render it.
         // Here you would typically create a texture from the frame data and render it to the window
@@ -88,9 +108,9 @@ impl ClientWindow {
         // let texture = texture_creator.create_texture_from_surface(&frame.image_data)?;
         // self.window.copy(&texture, None, None)?;
         // log::trace!("Received frame data: {:?}", frame);
-        if frame.format != FrameFormat::Rgba as i32 {
-            return Err(anyhow::anyhow!("Unsupported frame format"));
-        }
+        // if frame.format != FrameFormat::Rgba as i32 {
+        //     return Err(anyhow::anyhow!("Unsupported frame format"));
+        // }
         self.canvas.set_draw_color(Color::BLACK);
         self.canvas.clear();
 
@@ -103,7 +123,7 @@ impl ClientWindow {
                 frame.height,
             )
             .unwrap();
-        texture.update(None, &frame.image_data, frame.width as usize * 4)?; // Assuming RGBA format
+        texture.update(None, &frame.data, frame.width as usize * 4)?; // Assuming RGBA format
         self.canvas
             .copy(
                 &texture,
@@ -127,8 +147,8 @@ impl ClientWindow {
                     }
                 }
                 Err(e) => match e {
-                    std::sync::mpsc::TryRecvError::Empty => (), // do nothing, just continue
-                    std::sync::mpsc::TryRecvError::Disconnected => {
+                    mpsc::TryRecvError::Empty => (), // do nothing, just continue
+                    mpsc::TryRecvError::Disconnected => {
                         log::trace!("Server disconnected, exiting...");
                         break;
                     }
@@ -151,9 +171,11 @@ impl ClientWindow {
                             kind: user_input::InputType::KeyPress as i32,
                             key_code: key.into_i32(),
                             modifiers: keymod.bits() as u32,
-                            delta: 0,
-                            x: 0,
-                            y: 0,
+                            scroll_delta: 0,
+                            mouse_x: 0,
+                            mouse_y: 0,
+                            mouse_button: 0,
+                            window_id: self.settings.window_id,
                         }))?;
                     }
                     _ => (),

@@ -5,27 +5,29 @@ use rustls::{
     time_provider, ClientConnection, StreamOwned,
 };
 use shared::{
-    protocol::{self, WindowSettings},
+    protocol::{
+        self,
+        status_update::{Details, Exit, StatusType},
+        FrameFormat, WindowSettings,
+    },
     MessageCodec,
 };
 use std::{net::TcpStream, sync::Arc};
 
 pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 
-pub fn shutdown_tls(mut messages: Messages) -> Result<()> {
+pub fn shutdown_tls(messages: &mut Messages) -> Result<()> {
     log::trace!("Exiting gracefully...");
     messages.get_stream().conn.send_close_notify();
     messages.write_message(protocol::StatusUpdate {
-        kind: protocol::status_update::StatusType::Exit as i32,
-        message: "Goodbye".to_string(),
-        code: 0,
+        kind: StatusType::Exit as i32,
+        details: Some(Details::Exit(Exit {})),
     })?;
     messages
         .get_stream()
         .sock
         .shutdown(std::net::Shutdown::Both)?;
     log::trace!("Connection closed.");
-    drop(messages);
     Ok(())
 }
 
@@ -33,7 +35,7 @@ pub fn connect_tls(
     host: &str,
     port: u16,
     insecure: bool,
-) -> Result<(Option<WindowSettings>, Messages)> {
+) -> Result<(Vec<WindowSettings>, FrameFormat, Messages)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = tls_config(insecure)?;
     let mut conn = rustls::ClientConnection::new(Arc::new(tls_config), server_name)?;
@@ -46,8 +48,9 @@ pub fn connect_tls(
         return Err(anyhow::anyhow!("Handshake failed"));
     }
     let mut messages = Messages::new(tls_stream);
-    let initial_window_settings = shared::handshake_client(&mut messages)?;
-    Ok((initial_window_settings, messages))
+    let hello = shared::handshake_client(&mut messages)?;
+    let format: FrameFormat = hello.format.try_into()?;
+    Ok((hello.windows, format, messages))
 }
 
 fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {

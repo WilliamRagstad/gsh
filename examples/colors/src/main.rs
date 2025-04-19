@@ -3,17 +3,16 @@ use libgsh::{
     cert,
     rustls::ServerConfig,
     shared::{
-        protocol::{frame_data::FrameFormat, window_settings, FrameData, WindowSettings},
+        protocol::{self, window_settings, Frame, ServerHelloAck, WindowSettings},
         ClientEvent,
     },
     simple::{
-        server::SimpleServer,
+        server::{Messages, SimpleServer},
         service::{SimpleService, SimpleServiceExt},
     },
 };
 use log::trace;
 use rand::random;
-use std::sync::mpsc::{Receiver, Sender};
 
 fn main() {
     init_from_env(Env::default().default_filter_or("info"));
@@ -28,30 +27,37 @@ fn main() {
 
 const FRAME_WIDTH: usize = 250;
 const FRAME_HEIGHT: usize = 250;
+const PIXEL_BYTES: usize = 4; // RGBA
+const WINDOW_PRIMARY: u32 = 0;
+const WINDOW_SECONDARY: u32 = 1;
+
+type Color = (u8, u8, u8);
 
 pub struct ColorService {
-    frames: Sender<FrameData>,
-    events: Receiver<ClientEvent>,
-    fill_color: (u8, u8, u8),
-    changed_color: bool,
+    color: Color,
 }
 
 impl ColorService {
-    fn new_frame(&self) -> FrameData {
-        let format = FrameFormat::Rgba;
-        let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * 4];
+    fn send_frame(
+        &mut self,
+        messages: &mut Messages,
+        window_id: u32,
+        color: Color,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES];
         for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
-            frame[i * 4] = self.fill_color.0; // Red
-            frame[i * 4 + 1] = self.fill_color.1; // Green
-            frame[i * 4 + 2] = self.fill_color.2; // Blue
-            frame[i * 4 + 3] = 255;
+            frame[i * PIXEL_BYTES] = color.0; // Red
+            frame[i * PIXEL_BYTES + 1] = color.1; // Green
+            frame[i * PIXEL_BYTES + 2] = color.2; // Blue
+            frame[i * PIXEL_BYTES + 3] = 255;
         }
-        FrameData {
-            format: format as i32,
-            image_data: frame.to_vec(),
+        messages.write_message(Frame {
+            window_id,
+            data: frame.to_vec(),
             width: FRAME_WIDTH as u32,
             height: FRAME_HEIGHT as u32,
-        }
+        })?;
+        Ok(())
     }
 
     fn random_color() -> (u8, u8, u8) {
@@ -60,56 +66,73 @@ impl ColorService {
         let b = random::<u8>();
         (r, g, b)
     }
+
+    fn swap_colors(&mut self, messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+        self.send_frame(messages, WINDOW_SECONDARY, self.color)?;
+        self.color = Self::random_color();
+        self.send_frame(messages, WINDOW_PRIMARY, self.color)?;
+        Ok(())
+    }
 }
 
 impl SimpleService for ColorService {
-    fn new(frames: Sender<FrameData>, events: Receiver<ClientEvent>) -> Self {
+    fn new() -> Self {
         Self {
-            frames,
-            events,
-            fill_color: Self::random_color(),
-            changed_color: true,
+            color: Color::default(),
         }
     }
 
-    fn main(self) -> Result<(), Box<dyn std::error::Error>> {
+    fn main(self, messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
         // We simply proxy to the `SimpleServiceExt` implementation.
-        <Self as SimpleServiceExt>::main(self)
+        <Self as SimpleServiceExt>::main(self, messages)
     }
 
-    fn initial_window_settings() -> Option<WindowSettings> {
-        Some(WindowSettings {
-            id: 0,
-            title: String::from("Colors!"),
-            initial_mode: window_settings::WindowMode::Windowed as i32,
-            width: FRAME_WIDTH as u32,
-            height: FRAME_HEIGHT as u32,
-            always_on_top: false,
-            allow_resize: false,
-        })
+    fn server_hello() -> ServerHelloAck {
+        ServerHelloAck {
+            format: protocol::FrameFormat::Rgba.into(),
+            windows: vec![
+                WindowSettings {
+                    window_id: WINDOW_PRIMARY,
+                    title: String::from("Colors!"),
+                    initial_mode: window_settings::WindowMode::Windowed.into(),
+                    width: FRAME_WIDTH as u32,
+                    height: FRAME_HEIGHT as u32,
+                    always_on_top: false,
+                    allow_resize: false,
+                    resize_frame: false,
+                    anchor: window_settings::FrameAnchor::Center.into(),
+                },
+                WindowSettings {
+                    window_id: WINDOW_SECONDARY,
+                    title: String::from("Previous"),
+                    initial_mode: window_settings::WindowMode::Windowed.into(),
+                    width: FRAME_WIDTH as u32,
+                    height: FRAME_HEIGHT as u32,
+                    always_on_top: false,
+                    allow_resize: false,
+                    resize_frame: false,
+                    anchor: window_settings::FrameAnchor::Center.into(),
+                },
+            ],
+        }
     }
 }
 
 // The `SimpleServiceExt` trait provides a default event loop implementation,
 // we only need to implement the `events`, `tick` and `handle_event` methods.
 impl SimpleServiceExt for ColorService {
-    fn events(&self) -> &Receiver<ClientEvent> {
-        &self.events
+    fn on_startup(&mut self, messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+        self.swap_colors(messages)
     }
 
-    fn tick(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.changed_color {
-            self.frames.send(self.new_frame())?;
-            self.changed_color = false;
-        }
-        Ok(())
-    }
-
-    fn handle_event(&mut self, event: ClientEvent) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_event(
+        &mut self,
+        messages: &mut Messages,
+        event: ClientEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
-            self.fill_color = Self::random_color();
-            self.changed_color = true;
+            self.swap_colors(messages)?;
         }
         Ok(())
     }

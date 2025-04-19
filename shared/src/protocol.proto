@@ -13,15 +13,24 @@ message ClientHello {
 		ANDROID = 5;
 		WEB = 6;
 	}
-	uint32 version = 2;
-	OS os = 3;           // Operating system of the client
-	string os_version = 4; // Version of the operating system
+	uint32 protocol_version = 1;
+	OS os = 2;           // Operating system of the client
+	string os_version = 3; // Version of the operating system
 }
 
 // Acknowledgment message from the server to the client
 // Server -> Client
 message ServerHelloAck {
-	WindowSettings initial_window_settings = 1; // Window settings for the client
+	FrameFormat format = 1;
+	// List of initial window settings for the client
+	repeated WindowSettings windows = 2;
+}
+
+// Frame format enum, used to specify the format of the image data
+// Server -> Client
+enum FrameFormat {
+	RGB = 0;
+	RGBA = 1;
 }
 
 // Window settings message, used to configure the window properties for the client.
@@ -33,27 +42,32 @@ message WindowSettings {
 		WINDOWED = 2;
 		WINDOWED_MAXIMIZED = 3;
 	}
-	uint32 id = 1;       // Unique identifier for the window
+	uint32 window_id = 1;       // Unique identifier for the window
 	WindowMode initial_mode = 2; // Window mode (fullscreen, windowed, borderless)
 	uint32 width = 3;    // Width of the window in pixels
 	uint32 height = 4;   // Height of the window in pixels
 	string title = 5;    // Title of the window
 	bool always_on_top = 6; // Whether the window is always on top
 	bool allow_resize = 7; // Whether the window can be resized
+	// If allow_resize = true, this flag determines
+	// whether frame images should be resized to fit the window
+	// when the window is resized or stay fixed to the original frame size.
+	bool resize_frame = 8;
+	// Determines how the frame image is anchored in the window
+	enum FrameAnchor {
+		TOP_LEFT = 0;
+		CENTER = 1;
+	}
+	FrameAnchor anchor = 9; // Anchor position of the frame image in the window
 }
 
 // Message representing a frame of image data
 // Server -> Client
-message FrameData {
-	enum FrameFormat {
-		RGB = 0;
-		RGBA = 1;
-		GRAYSCALE = 2;
-	}
-	FrameFormat format = 4;
-	uint32 width = 2;     // Width of the image in pixels
-	uint32 height = 3;    // Height of the image in pixels
-	bytes image_data = 1; // Raw image data in bytes
+message Frame {
+	uint32 window_id = 1; // Unique identifier for the window
+	uint32 width = 3;     // Width of the image in pixels
+	uint32 height = 4;    // Height of the image in pixels
+	bytes data = 5; // Raw image data in bytes
 }
 
 // Message representing user input events
@@ -75,20 +89,26 @@ message UserInput {
 		WINDOW_CLOSE = 12;
 		WINDOW_MINIMIZE = 13;
 		WINDOW_MAXIMIZE = 14;
-		WINDOW_RESTORE = 15;
-		WINDOW_FULLSCREEN = 16;
-		WINDOW_UNFULLSCREEN = 17;
-		WINDOW_FOCUS = 18;
-		WINDOW_UNFOCUS = 19;
-		WINDOW_SHOW = 22;
-		WINDOW_HIDE = 23;
+		WINDOW_FULLSCREEN = 15;
+		WINDOW_UNFULLSCREEN = 16;
+		WINDOW_FOCUS = 17;
+		WINDOW_UNFOCUS = 18;
+	}
+	enum MouseButton {
+		LEFT = 0;
+		RIGHT = 1;
+		MIDDLE = 2;
+		BACK = 3;
+		FORWARD = 4;
 	}
 	InputType kind = 1;   // Type of input event
-	int32 key_code = 2;   // Key code (for keyboard events)
-	uint32 modifiers = 3;   // Modifier keys (e.g., Shift, Ctrl, Alt)
-	int32 x = 4;          // X coordinate (for mouse events)
-	int32 y = 5;          // Y coordinate (for mouse events)
-	int32 delta = 6;      // Scroll delta (for mouse scroll events)
+	uint32 window_id = 2; // Unique identifier for the window
+	int32 key_code = 3;   // Key code (for keyboard events)
+	uint32 modifiers = 4;   // Modifier keys (e.g., Shift, Ctrl, Alt)
+	int32 mouse_x = 5;          // X coordinate (for mouse events)
+	int32 mouse_y = 6;          // Y coordinate (for mouse events)
+	MouseButton mouse_button = 7; // Mouse button (for mouse click events)
+	int32 scroll_delta = 8;      // Scroll delta (for mouse scroll events)
 }
 
 // Message representing status updates
@@ -101,7 +121,31 @@ message StatusUpdate {
 		ERROR = 2;
 		EXIT = 3;
 	}
-	StatusType kind = 1;   // Type of status update
-	string message = 2;      // Status message
-	int32 code = 3;          // Status code
+	StatusType kind = 1; // Type of status update
+	oneof details {
+		Info info = 3;
+		Warning warning = 4;
+		Error error = 5;
+		Exit exit = 6;
+	}
+
+	// Nested message for informational updates
+	message Info {
+		string message = 1; // Informational message
+	}
+
+	// Nested message for warning updates
+	message Warning {
+		string message = 1; // Warning message
+		int32 code = 2;     // Warning code
+	}
+
+	// Nested message for error updates
+	message Error {
+		string message = 1; // Error message
+		int32 code = 2;     // Error code
+	}
+
+	// Nested message for exit updates
+	message Exit {	}
 }

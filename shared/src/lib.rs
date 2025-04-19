@@ -2,11 +2,13 @@ use std::io::{Read, Write};
 
 pub use prost;
 use prost::Message;
-use protocol::ClientHello;
+use protocol::{ClientHello, ServerHelloAck};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
 }
+
+#[derive(Debug, Clone)]
 pub enum ClientEvent {
     StatusUpdate(protocol::StatusUpdate),
     UserInput(protocol::UserInput),
@@ -55,7 +57,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
     /// Writes a length-value encoded message to the underlying writer.
     pub fn write_message<T: Message>(&mut self, message: T) -> std::io::Result<()> {
         let message = message.encode_to_vec();
-        let mut buf: Vec<u8> = Vec::with_capacity(LENGTH_SIZE + message.len());
+        let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
         let length = message.len() as LengthType;
         let length_buf = length.to_be_bytes();
         buf.extend_from_slice(&length_buf);
@@ -69,9 +71,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_client<S>(
-    messages: &mut MessageCodec<S>,
-) -> std::io::Result<Option<protocol::WindowSettings>>
+pub fn handshake_client<S>(messages: &mut MessageCodec<S>) -> std::io::Result<ServerHelloAck>
 where
     S: Read + Write + Send,
 {
@@ -83,12 +83,12 @@ where
     } as i32;
     let os_version = os_info::get().version().to_string();
     messages.write_message(protocol::ClientHello {
-        version: PROTOCOL_VERSION,
+        protocol_version: PROTOCOL_VERSION,
         os,
         os_version,
     })?;
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
-    Ok(server_hello.initial_window_settings)
+    Ok(server_hello)
 }
 
 /// Handshake function for the **server side**.
@@ -97,26 +97,25 @@ where
 pub fn handshake_server<S>(
     messages: &mut MessageCodec<S>,
     supported_protocol_versions: &[u32],
-    initial_window_settings: Option<protocol::WindowSettings>,
+    server_hello: ServerHelloAck,
 ) -> std::io::Result<ClientHello>
 where
     S: Read + Write + Send,
 {
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
-    if !supported_protocol_versions.contains(&client_hello.version) {
+    if !supported_protocol_versions.contains(&client_hello.protocol_version) {
         let msg = format!(
             "Unsupported client protocol version: {}. Supported versions: {:?}",
-            client_hello.version, supported_protocol_versions
+            client_hello.protocol_version, supported_protocol_versions
         );
         messages.write_message(protocol::StatusUpdate {
             kind: protocol::status_update::StatusType::Exit as i32,
-            message: msg.clone(),
-            code: 0,
+            details: Some(protocol::status_update::Details::Exit(
+                protocol::status_update::Exit {},
+            )),
         })?;
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
     }
-    messages.write_message(protocol::ServerHelloAck {
-        initial_window_settings,
-    })?;
+    messages.write_message(server_hello)?;
     Ok(client_hello)
 }
