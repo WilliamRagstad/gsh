@@ -1,4 +1,4 @@
-# 🎛 GSH Example Gallery
+# 🎓 Example Gallery
 
 This directory showcases two example GSH (Graphical Shell) services built with [`libgsh`](https://github.com/gsh-shell/libgsh). Each service demonstrates a unique rendering pipeline powered by Rust and pixel-level control over the display.
 
