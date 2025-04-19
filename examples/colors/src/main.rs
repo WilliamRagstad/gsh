@@ -8,7 +8,7 @@ use libgsh::{
     },
     simple::{
         server::{Messages, SimpleServer},
-        service::{SimpleService, SimpleServiceExt},
+        service::{Result, SimpleService, SimpleServiceExt},
     },
 };
 use log::trace;
@@ -43,12 +43,7 @@ pub struct ColorService {
 }
 
 impl ColorService {
-    fn send_frame(
-        &mut self,
-        messages: &mut Messages,
-        window_id: u32,
-        color: Color,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn send_frame(&mut self, messages: &mut Messages, window_id: u32, color: Color) -> Result<()> {
         let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES];
         for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
             frame[i * PIXEL_BYTES] = color.0; // Red
@@ -72,7 +67,7 @@ impl ColorService {
         (r, g, b)
     }
 
-    fn swap_colors(&mut self, messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+    fn swap_colors(&mut self, messages: &mut Messages) -> Result<()> {
         self.send_frame(messages, WINDOW_SECONDARY, self.color)?;
         self.color = Self::random_color();
         self.send_frame(messages, WINDOW_PRIMARY, self.color)?;
@@ -87,7 +82,7 @@ impl SimpleService for ColorService {
         }
     }
 
-    fn main(self, messages: Messages) -> Result<(), Box<dyn std::error::Error>> {
+    fn main(self, messages: Messages) -> Result<()> {
         // We simply proxy to the `SimpleServiceExt` implementation.
         <Self as SimpleServiceExt>::main(self, messages)
     }
@@ -126,15 +121,11 @@ impl SimpleService for ColorService {
 // The `SimpleServiceExt` trait provides a default event loop implementation,
 // we only need to implement the `events`, `tick` and `handle_event` methods.
 impl SimpleServiceExt for ColorService {
-    fn on_startup(&mut self, messages: &mut Messages) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
         self.swap_colors(messages)
     }
 
-    fn on_event(
-        &mut self,
-        messages: &mut Messages,
-        event: ClientEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
             self.swap_colors(messages)?;
