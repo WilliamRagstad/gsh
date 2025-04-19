@@ -74,41 +74,80 @@ message Frame {
 // Client -> Server
 message UserInput {
 	enum InputType {
+		// Different types of basic input events
 		START = 0;
 		STOP = 1;
 		PAUSE = 2;
 		RESUME = 3;
 		RESET = 4;
-		KEY_PRESS = 5;
-		KEY_RELEASE = 6;
-		MOUSE_CLICK = 7;
-		MOUSE_MOVE = 8;
-		MOUSE_SCROLL = 9;
-		WINDOW_RESIZE = 10;
-		WINDOW_MOVE = 11;
-		WINDOW_CLOSE = 12;
-		WINDOW_MINIMIZE = 13;
-		WINDOW_MAXIMIZE = 14;
-		WINDOW_FULLSCREEN = 15;
-		WINDOW_UNFULLSCREEN = 16;
-		WINDOW_FOCUS = 17;
-		WINDOW_UNFOCUS = 18;
-	}
-	enum MouseButton {
-		LEFT = 0;
-		RIGHT = 1;
-		MIDDLE = 2;
-		BACK = 3;
-		FORWARD = 4;
+		BACK = 5;
+		FORWARD = 6;
+		// Input types for different events
+		KEY_EVENT = 7;
+		MOUSE_EVENT = 8;
+		WINDOW_EVENT = 9;
 	}
 	InputType kind = 1;   // Type of input event
 	uint32 window_id = 2; // Unique identifier for the window
-	int32 key_code = 3;   // Key code (for keyboard events)
-	uint32 modifiers = 4;   // Modifier keys (e.g., Shift, Ctrl, Alt)
-	int32 mouse_x = 5;          // X coordinate (for mouse events)
-	int32 mouse_y = 6;          // Y coordinate (for mouse events)
-	MouseButton mouse_button = 7; // Mouse button (for mouse click events)
-	int32 scroll_delta = 8;      // Scroll delta (for mouse scroll events)
+
+	// Oneof field to handle different types of input events
+	oneof input_event {
+		KeyEvent key_event = 3; // Keyboard event
+		MouseEvent mouse_event = 4; // Mouse event
+		WindowEvent window_event = 5; // Window event
+	}
+
+	// Nested message for keyboard events
+	message KeyEvent {
+		enum KeyAction {
+			PRESS = 0;
+			RELEASE = 1;
+		}
+		KeyAction action = 1; // Action (press or release)
+		int32 key_code = 2;  // Key code (e.g., ASCII value)
+		uint32 modifiers = 3; // Modifier keys (e.g., Shift, Ctrl, Alt)
+	}
+
+	// Nested message for mouse events
+	message MouseEvent {
+		enum MouseAction {
+			MOVE = 0;
+			PRESS = 1;
+			RELEASE = 2;
+			SCROLL = 3;
+		}
+		MouseAction action = 1; // Action (move, click, scroll)
+		enum MouseButton {
+			LEFT = 0;
+			RIGHT = 1;
+			MIDDLE = 2;
+		}
+		int32 button = 2; // Mouse button (e.g., left, right, middle)
+		int32 x = 3;     // X coordinate of the mouse event
+		int32 y = 4;     // Y coordinate of the mouse event
+		float delta_x = 5; // Scroll delta (for scroll events)
+		float delta_y = 6; // Scroll delta (for scroll events)
+	}
+
+	// Nested message for window events
+	message WindowEvent {
+		enum WindowAction {
+			RESIZE = 0;
+			MOVE = 1;
+			CLOSE = 2;
+			MINIMIZE = 3;
+			MAXIMIZE = 4;
+			FULLSCREEN = 5;
+			UNFULLSCREEN = 6;
+			FOCUS = 7;
+			UNFOCUS = 8;
+		}
+		WindowAction action = 1; // Action (resize, move, close, etc.)
+		int32 x = 2;            // X coordinate of the window
+		int32 y = 3;            // Y coordinate of the window
+		uint32 width = 4;       // Width of the window in pixels
+		uint32 height = 5;      // Height of the window in pixels
+	}
 }
 
 // Message representing status updates

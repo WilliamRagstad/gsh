@@ -8,14 +8,21 @@ use sdl2::{
 use shared::{
     prost::Message,
     protocol::{
-        self, user_input::InputType, window_settings::WindowMode, Frame, FrameFormat, UserInput,
-        WindowSettings,
+        self,
+        user_input::{
+            self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
+            InputType,
+        },
+        window_settings::WindowMode,
+        Frame, FrameFormat, UserInput, WindowSettings,
     },
 };
 use std::collections::HashMap;
 
 use crate::network::Messages;
 
+const MAX_FPS: u32 = 60;
+const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64; // in nanoseconds
 pub type WindowID = u32;
 
 pub struct Client {
@@ -81,14 +88,17 @@ impl Client {
         if let Some(mut canvas) = self.windows.remove(&window_id) {
             canvas.window_mut().hide();
             self.messages.write_message(protocol::UserInput {
-                kind: protocol::user_input::InputType::WindowClose as i32,
+                kind: protocol::user_input::InputType::WindowEvent as i32,
                 window_id,
-                key_code: 0,
-                modifiers: 0,
-                mouse_x: 0,
-                mouse_y: 0,
-                mouse_button: 0,
-                scroll_delta: 0,
+                input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                    user_input::WindowEvent {
+                        action: WindowAction::Close as i32,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    },
+                )),
             })?;
             // Remove the window from the mapping
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
@@ -115,12 +125,105 @@ impl Client {
         }
     }
 
+    fn key_event(
+        &mut self,
+        window_id: WindowID,
+        action: KeyAction,
+        keycode: sdl2::keyboard::Keycode,
+        keymod: sdl2::keyboard::Mod,
+    ) -> Result<()> {
+        self.messages.write_message(UserInput {
+            window_id: *self
+                .sdl_window_to_server_window
+                .get(&window_id)
+                .unwrap_or(&0),
+            kind: InputType::KeyEvent as i32,
+            input_event: Some(user_input::InputEvent::KeyEvent(user_input::KeyEvent {
+                action: action as i32,
+                key_code: keycode.into_i32(),
+                modifiers: keymod.bits() as u32,
+            })),
+        })?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn mouse_event(
+        &mut self,
+        window_id: WindowID,
+        action: MouseAction,
+        button: Option<sdl2::mouse::MouseButton>,
+        mouse_x: i32,
+        mouse_y: i32,
+        delta_x: f32,
+        delta_y: f32,
+    ) -> Result<()> {
+        let button = match button {
+            Some(sdl2::mouse::MouseButton::Left) => {
+                user_input::mouse_event::MouseButton::Left as i32
+            }
+            Some(sdl2::mouse::MouseButton::Middle) => {
+                user_input::mouse_event::MouseButton::Middle as i32
+            }
+            Some(sdl2::mouse::MouseButton::Right) => {
+                user_input::mouse_event::MouseButton::Right as i32
+            }
+            _ => 0,
+        };
+
+        self.messages.write_message(UserInput {
+            window_id: *self
+                .sdl_window_to_server_window
+                .get(&window_id)
+                .unwrap_or(&0),
+            kind: InputType::MouseEvent as i32,
+            input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
+                action: action as i32,
+                x: mouse_x,
+                y: mouse_y,
+                button,
+                delta_x,
+                delta_y,
+            })),
+        })?;
+        Ok(())
+    }
+
+    fn window_event(
+        &mut self,
+        window_id: WindowID,
+        action: WindowAction,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        self.messages.write_message(UserInput {
+            window_id: *self
+                .sdl_window_to_server_window
+                .get(&window_id)
+                .unwrap_or(&0),
+            kind: InputType::WindowEvent as i32,
+            input_event: Some(user_input::InputEvent::WindowEvent(
+                user_input::WindowEvent {
+                    action: action as i32,
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+            )),
+        })?;
+        Ok(())
+    }
+
     pub fn main(&mut self) -> Result<()> {
         // Set the socket to non-blocking mode
         // All calls to `read_message` will return immediately, even if no data is available
         self.messages.get_stream().sock.set_nonblocking(true)?;
         // Window event pump
         let mut event_pump = self.sdl_context.event_pump().map_err(|e| anyhow!(e))?;
+        let mut last_frame_time = std::time::Instant::now();
         'running: loop {
             // Read messages from the server
             match self.messages.read_message() {
@@ -167,32 +270,132 @@ impl Client {
                         win_event: WindowEvent::Close,
                         window_id,
                         ..
-                    } => self.destroy_window(window_id)?,
-                    Event::KeyDown {
-                        keycode: Some(key),
-                        keymod,
+                    } => {
+                        self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)?;
+                        log::trace!("Window {} closed", window_id);
+                        self.destroy_window(window_id)?;
+                    }
+                    Event::Window {
+                        win_event: WindowEvent::Resized(width, height),
                         window_id,
                         ..
                     } => {
-                        log::trace!("Key pressed: {:?}", key);
-                        // Send user input to server
-                        self.messages.write_message(UserInput {
-                            kind: InputType::KeyPress as i32,
-                            key_code: key.into_i32(),
-                            modifiers: keymod.bits() as u32,
-                            scroll_delta: 0,
-                            mouse_x: 0,
-                            mouse_y: 0,
-                            mouse_button: 0,
-                            window_id: *self
-                                .sdl_window_to_server_window
-                                .get(&window_id)
-                                .unwrap_or(&0),
-                        })?;
+                        self.window_event(
+                            window_id,
+                            WindowAction::Resize,
+                            0,
+                            0,
+                            width as u32,
+                            height as u32,
+                        )?;
+                        log::trace!("Window {} resized to {}x{}", window_id, width, height);
                     }
-                    _ => (),
+                    Event::Window {
+                        win_event: WindowEvent::Moved(x, y),
+                        window_id,
+                        ..
+                    } => {
+                        self.window_event(window_id, WindowAction::Move, x, y, 0, 0)?;
+                        log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                    }
+                    Event::KeyDown {
+                        keycode: Some(keycode),
+                        keymod,
+                        window_id,
+                        ..
+                    } => self.key_event(window_id, KeyAction::Press, keycode, keymod)?,
+                    Event::MouseMotion {
+                        window_id, x, y, ..
+                    } => {
+                        self.mouse_event(window_id, MouseAction::Move, None, x, y, 0.0, 0.0)?;
+                        log::trace!("Mouse moved in window {}: ({}, {})", window_id, x, y);
+                    }
+                    Event::MouseButtonDown {
+                        window_id,
+                        mouse_btn,
+                        x,
+                        y,
+                        ..
+                    } => {
+                        self.mouse_event(
+                            window_id,
+                            MouseAction::Press,
+                            Some(mouse_btn),
+                            x,
+                            y,
+                            0.0,
+                            0.0,
+                        )?;
+                        log::trace!(
+                            "Mouse button pressed in window {}: ({}, {})",
+                            window_id,
+                            x,
+                            y
+                        );
+                    }
+                    Event::MouseButtonUp {
+                        window_id,
+                        mouse_btn,
+                        x,
+                        y,
+                        ..
+                    } => {
+                        self.mouse_event(
+                            window_id,
+                            MouseAction::Release,
+                            Some(mouse_btn),
+                            x,
+                            y,
+                            0.0,
+                            0.0,
+                        )?;
+                        log::trace!(
+                            "Mouse button released in window {}: ({}, {})",
+                            window_id,
+                            x,
+                            y
+                        );
+                    }
+                    Event::MouseWheel {
+                        window_id,
+                        direction: _direction,
+                        precise_x,
+                        precise_y,
+                        mouse_x,
+                        mouse_y,
+                        ..
+                    } => {
+                        self.mouse_event(
+                            window_id,
+                            MouseAction::Scroll,
+                            None,
+                            mouse_x,
+                            mouse_y,
+                            precise_x,
+                            precise_y,
+                        )?;
+                        log::trace!(
+                            "Mouse wheel scrolled in window {}: ({}, {})",
+                            window_id,
+                            mouse_x,
+                            mouse_y,
+                        );
+                    }
+                    _ => {
+                        log::trace!("Unhandled event: {:?}", event);
+                    }
                 }
             }
+
+            // Sleep to maintain frame rate
+            let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
+            if elapsed_time < FRAME_TIME {
+                std::thread::sleep(std::time::Duration::new(
+                    0,
+                    (FRAME_TIME - elapsed_time) as u32,
+                ));
+            }
+            last_frame_time = std::time::Instant::now();
         }
         log::trace!("Exiting main loop...");
         // Destroy all windows (Hacky way to ensure all windows are closed)
@@ -204,6 +407,10 @@ impl Client {
     }
 
     fn render_frame(&mut self, frame: Frame) -> Result<()> {
+        if frame.data.is_empty() || frame.width == 0 || frame.height == 0 {
+            log::warn!("Received empty frame, skipping rendering.");
+            return Ok(());
+        }
         let format = self.get_format();
         let pixel_bytes = self.bytes_per_pixel();
         let server_window_id = frame.window_id;
