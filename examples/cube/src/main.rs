@@ -20,8 +20,8 @@ use vek::*;
 
 const PIXEL_BYTES: usize = 4; // RGBA
 const WINDOW_ID: u32 = 0;
-const INITIAL_WIDTH: u32 = 50;
-const INITIAL_HEIGHT: u32 = 50;
+const INITIAL_WIDTH: u32 = 100;
+const INITIAL_HEIGHT: u32 = 100;
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
@@ -97,10 +97,10 @@ impl CubeService {
         let rot_y: Mat4<f32> = Mat4::rotation_y(angle * 0.7);
         let model: Mat4<f32> = rot_y * rot_x;
 
-        log::trace!("Angle: {}", angle);
-        log::trace!("Rotation X: {:?}", rot_x);
-        log::trace!("Rotation Y: {:?}", rot_y);
-        log::trace!("Model Matrix: {:?}", model);
+        // log::trace!("Angle: {}", angle);
+        // log::trace!("Rotation X: {:?}", rot_x);
+        // log::trace!("Rotation Y: {:?}", rot_y);
+        // log::trace!("Model Matrix: {:?}", model);
 
         // Project vertices
         let projected: Vec<(i32, i32)> = vertices
@@ -189,7 +189,7 @@ impl SimpleService for CubeService {
 }
 
 impl SimpleServiceExt for CubeService {
-    const FPS: u32 = 10; // 1 FPS for simplicity
+    const FPS: u32 = 24; // 1 FPS for simplicity
 
     fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
         self.send_frame(messages)
@@ -207,6 +207,12 @@ impl SimpleServiceExt for CubeService {
                         self.width = window_event.width;
                         self.height = window_event.height;
                         self.send_frame(messages)?;
+                        log::info!(
+                            "WindowEvent: Resize event for window {}: {}x{}",
+                            input.window_id,
+                            self.width,
+                            self.height
+                        );
                     } else {
                         log::warn!(
                             "WindowEvent: Resize event for window {} ignored",

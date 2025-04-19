@@ -25,6 +25,8 @@ pub struct MessageCodec<S: Read + Write + Send> {
     stream: S,
     /// The buffer to store the read data.
     buf: Vec<u8>,
+
+    partial_read: bool,
 }
 
 impl<S: Read + Write + Send> MessageCodec<S> {
@@ -32,6 +34,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         Self {
             stream,
             buf: Vec::new(),
+            partial_read: false,
         }
     }
 
@@ -42,15 +45,20 @@ impl<S: Read + Write + Send> MessageCodec<S> {
     /// Reads a whole length-value encoded message from the underlying reader.
     /// Returns the message bytes as a `Vec<u8>`.
     pub fn read_message(&mut self) -> std::io::Result<prost::bytes::Bytes> {
-        let mut length_buf = [0; LENGTH_SIZE];
-        self.stream.read_exact(&mut length_buf)?;
-        let length = LengthType::from_be_bytes(length_buf) as usize;
-        self.buf.resize(length, 0);
+        if !self.partial_read {
+            let mut length_buf = [0; LENGTH_SIZE];
+            self.stream.read_exact(&mut length_buf)?;
+            let length = LengthType::from_be_bytes(length_buf) as usize;
+            self.buf.resize(length, 0);
+        }
+        self.partial_read = true;
         self.stream.read_exact(&mut self.buf)?;
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
         let bytes = prost::bytes::Bytes::from(self.buf.clone());
         self.buf.clear(); // Clear the buffer for future reads
+                          // If we managed to get here, no exception was thrown and we have a complete message.
+        self.partial_read = false;
         Ok(bytes)
     }
 

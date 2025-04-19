@@ -129,7 +129,9 @@ pub trait SimpleServiceExt: SimpleService {
                         allow_wouldblock(self.on_exit(&mut messages))?;
                         break 'running;
                     }
-                    std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
+                    std::io::ErrorKind::WouldBlock => {
+                        // No data available yet, do nothing
+                    }
                     _ => {
                         log::error!("Error reading message: {}", err);
                         allow_wouldblock(self.on_exit(&mut messages))?;
