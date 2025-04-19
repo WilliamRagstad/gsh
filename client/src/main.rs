@@ -166,8 +166,8 @@ impl Client {
 
     fn get_format(&self) -> PixelFormatEnum {
         match self.format {
-            FrameFormat::Rgba => PixelFormatEnum::RGBA8888,
-            FrameFormat::Rgb => PixelFormatEnum::RGB888,
+            FrameFormat::Rgba => PixelFormatEnum::RGBA32,
+            FrameFormat::Rgb => PixelFormatEnum::RGB24,
         }
     }
 
