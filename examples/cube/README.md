@@ -1,4 +1,4 @@
-# 🧊 Spinning 3D Cube – GSH Example
+# 🧊 Spinning 3D Cube
 
 ![Preview](preview.gif)
 
@@ -19,16 +19,3 @@ This example demonstrates a GSH (Graphical Shell) service that renders a spinnin
 - **Projection**: Simple perspective projection with adjustable depth
 - **Window Management**: Configured via GSH protocol with `allow_resize` and `FrameAnchor::Center`
 - **Interaction**: Continuous rotation; no user input required
-
-## Getting Started
-
-1. Ensure you have Rust installed.
-2. Clone the repository and navigate to the project directory.
-3. Build and run the project with `cargo run`, then connect to the GSH service using a compatible client.
-
-	```bash
-	gsh localhost --insecure
-	```
-
-4. The application will open a window displaying the spinning cube.
-5. Resize the window to see the cube remain centered and adjust its size accordingly.
