@@ -5,7 +5,7 @@ It provides a cross-platform native window to interface with graphical server ap
 
 ## Build from Source
 
-To build the **gsh client** from source, install the [required dependencies](#development) then run:
+To build the **gsh client** from source, install the [required dependencies](#contributing) then run:
 
 ```bash
 git clone https://github.com/WilliamRagstad/gsh && cd gsh/client
