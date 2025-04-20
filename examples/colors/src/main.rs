@@ -1,6 +1,7 @@
 use env_logger::Env;
 use libgsh::{
     cert,
+    frame::optimize_segments,
     rustls::ServerConfig,
     shared::{
         protocol::{self, window_settings, Frame, ServerHelloAck, WindowSettings},
@@ -40,6 +41,7 @@ type Color = (u8, u8, u8);
 
 pub struct ColorService {
     color: Color,
+    prev_frame: Vec<u8>,
 }
 
 impl ColorService {
@@ -53,7 +55,14 @@ impl ColorService {
         }
         messages.write_message(Frame {
             window_id,
-            data: frame.to_vec(),
+            // data: frame.to_vec(),
+            segments: optimize_segments(
+                &frame,
+                FRAME_WIDTH,
+                FRAME_HEIGHT,
+                &mut self.prev_frame,
+                PIXEL_BYTES,
+            ),
             width: FRAME_WIDTH as u32,
             height: FRAME_HEIGHT as u32,
         })?;
@@ -79,6 +88,7 @@ impl SimpleService for ColorService {
     fn new() -> Self {
         Self {
             color: Color::default(),
+            prev_frame: Vec::new(),
         }
     }
 

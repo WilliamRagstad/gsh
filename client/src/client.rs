@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use sdl2::{
     event::{Event, WindowEvent},
     pixels::PixelFormatEnum,
+    rect::Rect,
     render::Canvas,
     video,
 };
@@ -25,12 +26,20 @@ const MAX_FPS: u32 = 60;
 const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64; // in nanoseconds
 pub type WindowID = u32;
 
+pub struct SdlWindow {
+    // pub server_window_id: WindowID,
+    // pub texture_creator: sdl2::render::TextureCreator<video::WindowContext>,
+    // pub current_texture: sdl2::render::Texture<'static>,
+    pub canvas: Canvas<video::Window>,
+    // pub current_frame: Option<Frame>,
+}
+
 pub struct Client {
     sdl_context: sdl2::Sdl,
     video_subsystem: sdl2::VideoSubsystem,
     format: FrameFormat,
     /// Mapping from SDL2 window ID to SDL2 canvas video::Window
-    windows: HashMap<WindowID, Canvas<video::Window>>,
+    windows: HashMap<WindowID, SdlWindow>,
     /// Mapping from server ID to SDL2 window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
@@ -77,16 +86,19 @@ impl Client {
         self.sdl_window_to_server_window
             .insert(sdl_window_id, ws.window_id);
         log::info!("Window ID {} created", ws.window_id);
-        canvas.set_draw_color(sdl2::pixels::Color::BLACK);
         canvas.clear();
         canvas.present();
-        self.windows.insert(sdl_window_id, canvas);
+        let sdl_window = SdlWindow {
+            // server_window_id: ws.window_id,
+            canvas,
+        };
+        self.windows.insert(sdl_window_id, sdl_window);
         Ok(ws.window_id)
     }
 
     fn destroy_window(&mut self, window_id: WindowID) -> Result<()> {
-        if let Some(mut canvas) = self.windows.remove(&window_id) {
-            canvas.window_mut().hide();
+        if let Some(mut win) = self.windows.remove(&window_id) {
+            win.canvas.window_mut().hide();
             self.messages.write_message(protocol::UserInput {
                 kind: protocol::user_input::InputType::WindowEvent as i32,
                 window_id,
@@ -407,7 +419,7 @@ impl Client {
     }
 
     fn render_frame(&mut self, frame: Frame) -> Result<()> {
-        if frame.data.is_empty() || frame.width == 0 || frame.height == 0 {
+        if frame.segments.is_empty() || frame.width == 0 || frame.height == 0 {
             log::warn!("Received empty frame, skipping rendering.");
             return Ok(());
         }
@@ -415,14 +427,36 @@ impl Client {
         let pixel_bytes = self.bytes_per_pixel();
         let server_window_id = frame.window_id;
         if let Some(sdl_window_id) = self.server_window_to_sdl_window.get(&server_window_id) {
-            log::trace!("Rendering frame for window ID {}", server_window_id);
-            let canvas = self.windows.get_mut(sdl_window_id).unwrap();
-            let texture_creator = canvas.texture_creator();
+            log::trace!(
+                "Rendering frame ({} segments) for window ID {}",
+                frame.segments.len(),
+                server_window_id
+            );
+            let win = self.windows.get_mut(sdl_window_id).unwrap();
+            let texture_creator = win.canvas.texture_creator();
             let mut texture =
                 texture_creator.create_texture_target(format, frame.width, frame.height)?;
-            texture.update(None, &frame.data, frame.width as usize * pixel_bytes)?;
-            canvas.copy(&texture, None, None).map_err(|e| anyhow!(e))?;
-            canvas.present();
+            // Apply all segments of the frame to the window
+            for segment in &frame.segments {
+                if segment.width == 0 || segment.height == 0 {
+                    log::warn!("Received empty segment, skipping rendering.");
+                    continue;
+                }
+                texture.update(
+                    Some(Rect::new(
+                        segment.x,
+                        segment.y,
+                        segment.width,
+                        segment.height,
+                    )),
+                    &segment.data,
+                    frame.width as usize * pixel_bytes,
+                )?;
+            }
+            win.canvas
+                .copy(&texture, None, None)
+                .map_err(|e| anyhow!(e))?;
+            win.canvas.present();
         } else {
             log::warn!(
                 "Server Window ID {} not found in mapping (not rendered)",

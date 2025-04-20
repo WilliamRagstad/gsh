@@ -67,7 +67,16 @@ message Frame {
 	uint32 window_id = 1; // Unique identifier for the window
 	uint32 width = 3;     // Width of the image in pixels
 	uint32 height = 4;    // Height of the image in pixels
-	bytes data = 5; // Raw image data in bytes
+
+	// Partial frame segments
+	message Segment {
+		int32 x = 2;        // X coordinate of the top-left corner of the segment
+		int32 y = 3;        // Y coordinate of the top-left corner of the segment
+		uint32 width = 4;    // Width of the segment in pixels
+		uint32 height = 5;   // Height of the segment in pixels
+		bytes data = 6;      // Raw image data in bytes
+	}
+	repeated Segment segments = 2; // List of segments in the frame
 }
 
 // Message representing user input events

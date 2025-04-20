@@ -1,6 +1,7 @@
 use env_logger::Env;
 use libgsh::{
     cert,
+    frame::optimize_segments,
     rustls::ServerConfig,
     shared::{
         protocol::{
@@ -20,8 +21,9 @@ use vek::*;
 
 const PIXEL_BYTES: usize = 4; // RGBA
 const WINDOW_ID: u32 = 0;
-const INITIAL_WIDTH: u32 = 100;
-const INITIAL_HEIGHT: u32 = 100;
+const INITIAL_WIDTH: usize = 200;
+const INITIAL_HEIGHT: usize = 200;
+const MAX_FPS: u32 = 24; // 1 FPS for simplicity
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
@@ -42,26 +44,31 @@ fn main() {
 
 pub struct CubeService {
     start: Instant,
-    width: u32,
-    height: u32,
+    width: usize,
+    height: usize,
+    prev_frame: Vec<u8>,
 }
 
 impl CubeService {
-    fn send_frame(&self, messages: &mut Messages) -> Result<()> {
+    fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
         let frame = self.draw_cube();
         messages.write_message(Frame {
             window_id: WINDOW_ID,
-            data: frame,
-            width: self.width,
-            height: self.height,
+            segments: optimize_segments(
+                &frame,
+                self.width,
+                self.height,
+                &mut self.prev_frame,
+                PIXEL_BYTES,
+            ),
+            width: self.width as u32,
+            height: self.height as u32,
         })?;
         Ok(())
     }
 
     fn draw_cube(&self) -> Vec<u8> {
-        let width = self.width as usize;
-        let height = self.height as usize;
-        let mut frame = vec![0u8; width * height * PIXEL_BYTES];
+        let mut frame = vec![0u8; self.width * self.height * PIXEL_BYTES];
 
         // Define cube vertices
         let size = 0.4;
@@ -117,7 +124,7 @@ impl CubeService {
 
         // Draw edges
         for (a, b) in edges {
-            Self::draw_line(projected[a], projected[b], &mut frame, width);
+            Self::draw_line(projected[a], projected[b], &mut frame, self.width);
         }
 
         frame
@@ -163,6 +170,7 @@ impl SimpleService for CubeService {
             start: Instant::now(),
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
+            prev_frame: Vec::new(),
         }
     }
 
@@ -177,8 +185,8 @@ impl SimpleService for CubeService {
                 window_id: WINDOW_ID,
                 title: "Spinning Cube".into(),
                 initial_mode: window_settings::WindowMode::Windowed.into(),
-                width: INITIAL_WIDTH,
-                height: INITIAL_HEIGHT,
+                width: INITIAL_WIDTH as u32,
+                height: INITIAL_HEIGHT as u32,
                 always_on_top: false,
                 allow_resize: true,
                 resize_frame: true,
@@ -189,7 +197,7 @@ impl SimpleService for CubeService {
 }
 
 impl SimpleServiceExt for CubeService {
-    const FPS: u32 = 24; // 1 FPS for simplicity
+    const FPS: u32 = MAX_FPS;
 
     fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
         self.send_frame(messages)
@@ -204,8 +212,8 @@ impl SimpleServiceExt for CubeService {
             if let InputEvent::WindowEvent(window_event) = input.input_event.unwrap() {
                 if window_event.action == WindowAction::Resize as i32 {
                     if input.window_id == WINDOW_ID {
-                        self.width = window_event.width;
-                        self.height = window_event.height;
+                        self.width = window_event.width as usize;
+                        self.height = window_event.height as usize;
                         self.send_frame(messages)?;
                         log::info!(
                             "WindowEvent: Resize event for window {}: {}x{}",
