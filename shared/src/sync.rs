@@ -10,6 +10,8 @@ pub struct MessageCodec<S: Read + Write + Send> {
     /// The underlying reader and writer stream.
     stream: S,
     /// The buffer to store the read data.
+    length: usize,
+    /// The buffer to store the read data.
     buf: Vec<u8>,
 
     partial_read: bool,
@@ -20,6 +22,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         Self {
             stream,
             buf: Vec::new(),
+            length: 0,
             partial_read: false,
         }
     }
@@ -34,16 +37,18 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         if !self.partial_read {
             let mut length_buf = [0; LENGTH_SIZE];
             self.stream.read_exact(&mut length_buf)?;
-            let length = LengthType::from_be_bytes(length_buf) as usize;
-            self.buf.resize(length, 0);
+            self.length = LengthType::from_be_bytes(length_buf) as usize;
+            self.buf.resize(self.length, 0);
         }
         self.partial_read = true;
         self.stream.read_exact(&mut self.buf)?;
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
-        let bytes = prost::bytes::Bytes::from(self.buf.clone());
-        self.buf.clear(); // Clear the buffer for future reads
-                          // If we managed to get here, no exception was thrown and we have a complete message.
+        let bytes = prost::bytes::Bytes::from(std::mem::replace(
+            &mut self.buf,
+            Vec::with_capacity(self.length),
+        ));
+        // If we managed to get here, no exception was thrown and we have a complete message.
         self.partial_read = false;
         Ok(bytes)
     }
