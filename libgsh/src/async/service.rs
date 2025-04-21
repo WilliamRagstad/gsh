@@ -112,7 +112,7 @@ pub trait AsyncServiceExt: AsyncService {
                         self.on_exit(&mut messages).await?;
                         break 'running;
                     }
-                    std::io::ErrorKind::WouldBlock => {
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
                         // No data available yet, do nothing
                     }
                     _ => {

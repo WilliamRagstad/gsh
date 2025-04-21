@@ -4,6 +4,7 @@ use crate::{
 };
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::time::{timeout, Duration};
 
 /// A codec for reading and writing length-value encoded messages.
 #[derive(Debug)]
@@ -32,14 +33,16 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
     /// Reads a whole length-value encoded message from the underlying reader.
     /// Returns the message bytes as a `Vec<u8>`.
     pub async fn read_message(&mut self) -> std::io::Result<prost::bytes::Bytes> {
+        let read_timeout = Duration::from_millis(10); // Set a 10-second timeout
+
         if !self.partial_read {
             let mut length_buf = [0; LENGTH_SIZE];
-            self.stream.read_exact(&mut length_buf).await?;
+            timeout(read_timeout, self.stream.read_exact(&mut length_buf)).await??;
             let length = LengthType::from_be_bytes(length_buf) as usize;
             self.buf.resize(length, 0);
         }
         self.partial_read = true;
-        self.stream.read_exact(&mut self.buf).await?;
+        timeout(read_timeout, self.stream.read_exact(&mut self.buf)).await??;
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
         let bytes = prost::bytes::Bytes::from(self.buf.clone());
