@@ -72,10 +72,6 @@ pub trait AsyncServiceExt: AsyncService {
     {
         self.on_startup(&mut messages).await?;
 
-        // Set the socket to non-blocking mode
-        // All calls to `read_message` will return immediately, even if no data is available
-        // messages.get_stream().sock.set_nonblocking(true)?;
-
         log::trace!("Starting service main loop...");
         'running: loop {
             // Read messages from the client connection
@@ -127,28 +123,10 @@ pub trait AsyncServiceExt: AsyncService {
             self.on_tick(&mut messages).await?;
 
             // Sleep for the tick interval to maintain the desired FPS
-            std::thread::sleep(std::time::Duration::from_nanos(Self::TICK_INTERVAL));
+            tokio::time::sleep(std::time::Duration::from_nanos(Self::TICK_INTERVAL)).await;
+            log::trace!("Ticking service...");
         }
         log::trace!("Service main loop exited.");
         Ok(())
     }
 }
-
-// /// A helper function to handle `WouldBlock` errors in the service.\
-// /// If the error is of type `WouldBlock`, it returns a default value instead of an error.\
-// /// This is useful for non-blocking IO operations where the operation would block if no data is available.
-// ///
-// /// ## Note
-// /// This is a bit of a hack, and should be used with caution.
-// fn allow_wouldblock<T: Default>(result: Result<T>) -> Result<T> {
-//     match &result {
-//         Ok(_) => result,
-//         Err(err) => match err {
-//             SerivceError::IoError(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-//                 log::trace!("Caught WouldBlock error, returning default value.");
-//                 Ok(T::default())
-//             }
-//             _ => result,
-//         },
-//     }
-// }
