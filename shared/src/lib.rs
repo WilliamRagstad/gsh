@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 pub use prost;
 use prost::Message;
-use protocol::{ClientHello, ServerHelloAck};
+use protocol::{client_hello::MonitorInfo, ClientHello, ServerHelloAck};
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
@@ -79,7 +79,10 @@ impl<S: Read + Write + Send> MessageCodec<S> {
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_client<S>(messages: &mut MessageCodec<S>) -> std::io::Result<ServerHelloAck>
+pub fn handshake_client<S>(
+    messages: &mut MessageCodec<S>,
+    monitors: Vec<MonitorInfo>,
+) -> std::io::Result<ServerHelloAck>
 where
     S: Read + Write + Send,
 {
@@ -94,6 +97,7 @@ where
         protocol_version: PROTOCOL_VERSION,
         os,
         os_version,
+        monitors,
     })?;
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
     Ok(server_hello)

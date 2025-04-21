@@ -7,6 +7,7 @@ use rustls::{
 use shared::{
     protocol::{
         self,
+        client_hello::MonitorInfo,
         status_update::{Details, Exit, StatusType},
         FrameFormat, WindowSettings,
     },
@@ -35,6 +36,7 @@ pub fn connect_tls(
     host: &str,
     port: u16,
     insecure: bool,
+    monitors: Vec<MonitorInfo>,
 ) -> Result<(Vec<WindowSettings>, FrameFormat, Messages)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = tls_config(insecure)?;
@@ -48,7 +50,7 @@ pub fn connect_tls(
         return Err(anyhow::anyhow!("Handshake failed"));
     }
     let mut messages = Messages::new(tls_stream);
-    let hello = shared::handshake_client(&mut messages)?;
+    let hello = shared::handshake_client(&mut messages, monitors)?;
     let format: FrameFormat = hello.format.try_into()?;
     Ok((hello.windows, format, messages))
 }

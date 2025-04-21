@@ -35,8 +35,8 @@ pub struct SdlWindow {
 }
 
 pub struct Client {
-    sdl_context: sdl2::Sdl,
-    video_subsystem: sdl2::VideoSubsystem,
+    sdl: sdl2::Sdl,
+    video: sdl2::VideoSubsystem,
     format: FrameFormat,
     /// Mapping from SDL2 window ID to SDL2 canvas video::Window
     windows: HashMap<WindowID, SdlWindow>,
@@ -47,12 +47,17 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(format: FrameFormat, messages: Messages) -> Result<Self> {
-        let sdl_context = sdl2::init().map_err(|e| anyhow!(e))?;
-        let video_subsystem = sdl_context.video().map_err(|e| anyhow!(e))?;
+    pub fn new(
+        sdl: sdl2::Sdl,
+        video: sdl2::VideoSubsystem,
+        format: FrameFormat,
+        messages: Messages,
+    ) -> Result<Self> {
+        // let sdl_context = sdl2::init().map_err(|e| anyhow!(e))?;
+        // let video_subsystem = sdl_context.video().map_err(|e| anyhow!(e))?;
         Ok(Client {
-            sdl_context,
-            video_subsystem,
+            sdl,
+            video,
             format,
             windows: HashMap::new(),
             server_window_to_sdl_window: HashMap::new(),
@@ -66,8 +71,18 @@ impl Client {
     }
 
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
-        let mut window = self.video_subsystem.window(&ws.title, ws.width, ws.height);
-        window.position_centered();
+        let mut window = self.video.window(&ws.title, ws.width, ws.height);
+        if let Some(monitor_id) = ws.monitor_id {
+            let monitor = self
+                .video
+                .display_bounds(monitor_id as i32)
+                .map_err(|e| anyhow!(e))?;
+            let x = monitor.x() + ((monitor.width() as i32) - ws.width as i32) / 2;
+            let y = monitor.y() + ((monitor.height() as i32) - ws.height as i32) / 2;
+            window.position(x, y);
+        } else {
+            window.position_centered();
+        }
         if ws.allow_resize {
             window.resizable();
         }
@@ -234,7 +249,7 @@ impl Client {
         // All calls to `read_message` will return immediately, even if no data is available
         self.messages.get_stream().sock.set_nonblocking(true)?;
         // Window event pump
-        let mut event_pump = self.sdl_context.event_pump().map_err(|e| anyhow!(e))?;
+        let mut event_pump = self.sdl.event_pump().map_err(|e| anyhow!(e))?;
         let mut last_frame_time = std::time::Instant::now();
         'running: loop {
             // Read messages from the server

@@ -13,9 +13,18 @@ message ClientHello {
 		ANDROID = 5;
 		WEB = 6;
 	}
+	message MonitorInfo {
+		uint32 monitor_id   = 1;
+		int32  x            = 2;
+		int32  y            = 3;
+		uint32 width        = 4;
+		uint32 height       = 5;
+		uint32 refresh_hz   = 6;
+	}
 	uint32 protocol_version = 1;
 	OS os = 2;           // Operating system of the client
 	string os_version = 3; // Version of the operating system
+	repeated MonitorInfo monitors = 4; // List of monitor information
 }
 
 // Acknowledgment message from the server to the client
@@ -43,22 +52,23 @@ message WindowSettings {
 		WINDOWED_MAXIMIZED = 3;
 	}
 	uint32 window_id = 1;       // Unique identifier for the window
-	WindowMode initial_mode = 2; // Window mode (fullscreen, windowed, borderless)
-	uint32 width = 3;    // Width of the window in pixels
-	uint32 height = 4;   // Height of the window in pixels
-	string title = 5;    // Title of the window
-	bool always_on_top = 6; // Whether the window is always on top
-	bool allow_resize = 7; // Whether the window can be resized
+	optional uint32 monitor_id = 2; // Monitor ID for the window
+	WindowMode initial_mode = 3; // Window mode (fullscreen, windowed, borderless)
+	uint32 width = 4;    // Width of the window in pixels
+	uint32 height = 5;   // Height of the window in pixels
+	string title = 6;    // Title of the window
+	bool always_on_top = 7; // Whether the window is always on top
+	bool allow_resize = 8; // Whether the window can be resized
 	// If allow_resize = true, this flag determines
 	// whether frame images should be resized to fit the window
 	// when the window is resized or stay fixed to the original frame size.
-	bool resize_frame = 8;
+	bool resize_frame = 9;
 	// Determines how the frame image is anchored in the window
-	enum FrameAnchor {
+	enum WindowAnchor {
 		TOP_LEFT = 0;
 		CENTER = 1;
 	}
-	FrameAnchor anchor = 9; // Anchor position of the frame image in the window
+	WindowAnchor frame_anchor = 10; // Anchor position of the frame image in the window
 }
 
 // Message representing a frame of image data
