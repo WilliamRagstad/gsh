@@ -1,27 +1,11 @@
 use super::server::Messages;
+use crate::{Result, SerivceError};
 use shared::{
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
     ClientEvent,
 };
 use std::io::Write;
-
-#[derive(Debug, thiserror::Error)]
-pub enum SerivceError {
-    IoError(#[from] std::io::Error),
-    AnyError(#[from] Box<dyn std::error::Error + Send + Sync>),
-}
-
-impl std::fmt::Display for SerivceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SerivceError::IoError(err) => write!(f, "IO error: {}", err),
-            SerivceError::AnyError(err) => write!(f, "{}", err),
-        }
-    }
-}
-
-pub type Result<T> = std::result::Result<T, SerivceError>;
 
 /// A trait for a simple service that can be run in a separate thread.
 /// The service is responsible for handling client events and sending frames to the client.

@@ -1,12 +1,11 @@
+use super::service::SimpleService;
+use crate::Result;
+use shared::{protocol::client_hello, sync::MessageCodec};
 use std::{
     net::{TcpListener, TcpStream},
     sync::Arc,
 };
-
-use rustls::{ServerConfig, ServerConnection, StreamOwned};
-use shared::{protocol::client_hello, MessageCodec};
-
-use super::service::SimpleService;
+use tokio_rustls::rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 const DEFAULT_PORT: u16 = 1122;
 pub type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
@@ -41,13 +40,13 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
 
     /// Starts the server and listens for incoming connections on the default port (1122).\
     /// This method blocks until the server is stopped or an error occurs.
-    pub fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn serve(self) -> Result<()> {
         self.serve_port(DEFAULT_PORT)
     }
 
     /// Starts the server and listens for incoming connections on the specified port.\
     /// This method blocks until the server is stopped or an error occurs.
-    pub fn serve_port(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn serve_port(self, port: u16) -> Result<()> {
         let listener = TcpListener::bind(format!("[::]:{}", port))?;
         let service_fullname = std::any::type_name::<ServiceT>();
         let service_name = service_fullname
@@ -59,32 +58,40 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
             service_name,
             listener.local_addr()?
         );
-        while let Ok((mut stream, addr)) = listener.accept() {
+        loop {
+            let (mut stream, addr) = listener.accept()?;
             let mut conn = ServerConnection::new(Arc::new(self.config.clone()))?;
-            conn.complete_io(&mut stream)?;
-            let tls_stream = StreamOwned::new(conn, stream);
-            let mut messages = Messages::new(tls_stream);
-            let client = shared::handshake_server(
-                &mut messages,
-                &[shared::PROTOCOL_VERSION],
-                ServiceT::server_hello(),
-            )?;
-            let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
-            let monitors = client.monitors.len();
-            println!(
-                "+ Client connected running {:?} {} with {} monitor(s) on {}",
-                os,
-                client.os_version,
-                monitors,
-                addr.port(),
-            );
             std::thread::spawn(move || {
-                if let Err(e) = ServiceT::new().main(messages) {
+                conn.complete_io(&mut stream).unwrap();
+                let tls_stream = StreamOwned::new(conn, stream);
+                let messages = Messages::new(tls_stream);
+                if let Err(e) = Self::handle_client(messages, addr) {
                     log::error!("Service error {}: {}", addr, e);
                 }
                 println!("- Client disconnected from {}", addr);
             });
         }
+    }
+
+    /// Handles a client connection.\
+    /// This function performs the TLS handshake and starts the service's main event loop.\
+    fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
+        let client = shared::sync::handshake_server(
+            &mut messages,
+            &[shared::PROTOCOL_VERSION],
+            ServiceT::server_hello(),
+        )?;
+        let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
+        let monitors = client.monitors.len();
+        println!(
+            "+ Client connected running {:?} {} with {} monitor(s) on {}",
+            os,
+            client.os_version,
+            monitors,
+            addr.port(),
+        );
+        let service = ServiceT::new();
+        service.main(messages)?;
         Ok(())
     }
 }

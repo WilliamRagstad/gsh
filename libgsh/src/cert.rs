@@ -1,5 +1,5 @@
 use rcgen::{generate_simple_self_signed, CertifiedKey};
-use rustls::pki_types::{pem::PemObject, PrivateKeyDer};
+use tokio_rustls::rustls::pki_types::{pem::PemObject, PrivateKeyDer};
 
 // Generate a self-signed certificate
 pub fn self_signed<T: AsRef<str>>(
