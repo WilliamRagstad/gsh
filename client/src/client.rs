@@ -10,12 +10,13 @@ use shared::{
     prost::Message,
     protocol::{
         self,
+        server_hello_ack::FrameFormat,
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
             InputType,
         },
         window_settings::WindowMode,
-        Frame, FrameFormat, UserInput, WindowSettings,
+        Frame, UserInput, WindowSettings,
     },
 };
 use std::collections::HashMap;

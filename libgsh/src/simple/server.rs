@@ -70,9 +70,13 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
                 ServiceT::server_hello(),
             )?;
             let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
+            let monitors = client.monitors.len();
             println!(
-                "+ Client connected from {} on {:?} {}",
-                addr, os, client.os_version
+                "+ Client connected running {:?} {} with {} monitor(s) on {}",
+                os,
+                client.os_version,
+                monitors,
+                addr.port(),
             );
             std::thread::spawn(move || {
                 if let Err(e) = ServiceT::new().main(messages) {

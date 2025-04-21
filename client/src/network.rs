@@ -8,8 +8,9 @@ use shared::{
     protocol::{
         self,
         client_hello::MonitorInfo,
+        server_hello_ack::FrameFormat,
         status_update::{Details, Exit, StatusType},
-        FrameFormat, WindowSettings,
+        WindowSettings,
     },
     MessageCodec,
 };

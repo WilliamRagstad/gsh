@@ -30,17 +30,16 @@ message ClientHello {
 // Acknowledgment message from the server to the client
 // Server -> Client
 message ServerHelloAck {
+	// Frame format enum, used to specify the format of the image data
+	enum FrameFormat {
+		RGB = 0;
+		RGBA = 1;
+	}
 	FrameFormat format = 1;
 	// List of initial window settings for the client
 	repeated WindowSettings windows = 2;
 }
 
-// Frame format enum, used to specify the format of the image data
-// Server -> Client
-enum FrameFormat {
-	RGB = 0;
-	RGBA = 1;
-}
 
 // Window settings message, used to configure the window properties for the client.
 // Server -> Client

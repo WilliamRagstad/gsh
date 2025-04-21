@@ -4,7 +4,9 @@ use libgsh::{
     frame::optimize_segments,
     rustls::ServerConfig,
     shared::{
-        protocol::{self, window_settings, Frame, ServerHelloAck, WindowSettings},
+        protocol::{
+            server_hello_ack::FrameFormat, window_settings, Frame, ServerHelloAck, WindowSettings,
+        },
         ClientEvent,
     },
     simple::{
@@ -99,10 +101,11 @@ impl SimpleService for ColorService {
 
     fn server_hello() -> ServerHelloAck {
         ServerHelloAck {
-            format: protocol::FrameFormat::Rgba.into(),
+            format: FrameFormat::Rgba.into(),
             windows: vec![
                 WindowSettings {
                     window_id: WINDOW_PRIMARY,
+                    monitor_id: None,
                     title: String::from("Colors!"),
                     initial_mode: window_settings::WindowMode::Windowed.into(),
                     width: FRAME_WIDTH as u32,
@@ -110,10 +113,11 @@ impl SimpleService for ColorService {
                     always_on_top: false,
                     allow_resize: false,
                     resize_frame: false,
-                    anchor: window_settings::FrameAnchor::Center.into(),
+                    frame_anchor: window_settings::WindowAnchor::Center.into(),
                 },
                 WindowSettings {
                     window_id: WINDOW_SECONDARY,
+                    monitor_id: None,
                     title: String::from("Previous"),
                     initial_mode: window_settings::WindowMode::Windowed.into(),
                     width: FRAME_WIDTH as u32,
@@ -121,7 +125,7 @@ impl SimpleService for ColorService {
                     always_on_top: false,
                     allow_resize: false,
                     resize_frame: false,
-                    anchor: window_settings::FrameAnchor::Center.into(),
+                    frame_anchor: window_settings::WindowAnchor::Center.into(),
                 },
             ],
         }

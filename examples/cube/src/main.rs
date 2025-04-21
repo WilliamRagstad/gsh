@@ -5,7 +5,7 @@ use libgsh::{
     rustls::ServerConfig,
     shared::{
         protocol::{
-            self,
+            server_hello_ack::FrameFormat,
             user_input::{window_event::WindowAction, InputEvent},
             window_settings, Frame, ServerHelloAck, WindowSettings,
         },
@@ -180,9 +180,10 @@ impl SimpleService for CubeService {
 
     fn server_hello() -> ServerHelloAck {
         ServerHelloAck {
-            format: protocol::FrameFormat::Rgba.into(),
+            format: FrameFormat::Rgba.into(),
             windows: vec![WindowSettings {
                 window_id: WINDOW_ID,
+                monitor_id: None,
                 title: "Spinning Cube".into(),
                 initial_mode: window_settings::WindowMode::Windowed.into(),
                 width: INITIAL_WIDTH as u32,
@@ -190,7 +191,7 @@ impl SimpleService for CubeService {
                 always_on_top: false,
                 allow_resize: true,
                 resize_frame: true,
-                anchor: window_settings::FrameAnchor::Center.into(),
+                frame_anchor: window_settings::WindowAnchor::Center.into(),
             }],
         }
     }
