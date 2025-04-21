@@ -14,11 +14,22 @@ This library is an integral part of the **gsh** ecosystem, enabling developers t
 ## Build a Server
 
 Do you want to build your own service with **gsh**?
-These instructions detail how to set up a server application that can communicate with the **gsh** client.
+Choose between these *out-of-the-box* server implementations:
+
+| Server   | Description                                                    | Technology             |
+| -------- | -------------------------------------------------------------- | ---------------------- |
+| `async`  | An asynchronous server that handle communication concurrently. | Tokio async runtime    |
+| `simple` | A basic server that handle non-blocking communication          | Native multi-threading |
+
+> **Recommendation**\
+> The `async` server provides better performance and scalability for most applications.
+
+View the [**examples**](../examples/) directory for service implementations using the `async` and `simple` servers.
+There you can view how they interact with the **gsh** client.
 
 ## Prerequisites
 
-Install the following dependencies before proceeding with development:
+Install the following dependencies before proceeding with setting up your development environment:
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
 - Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) version 17
