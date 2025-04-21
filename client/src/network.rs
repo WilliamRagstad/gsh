@@ -12,7 +12,7 @@ use shared::{
         status_update::{Details, Exit, StatusType},
         WindowSettings,
     },
-    MessageCodec,
+    sync::MessageCodec,
 };
 use std::{net::TcpStream, sync::Arc};
 
@@ -51,7 +51,7 @@ pub fn connect_tls(
         return Err(anyhow::anyhow!("Handshake failed"));
     }
     let mut messages = Messages::new(tls_stream);
-    let hello = shared::handshake_client(&mut messages, monitors)?;
+    let hello = shared::sync::handshake_client(&mut messages, monitors)?;
     let format: FrameFormat = hello.format.try_into()?;
     Ok((hello.windows, format, messages))
 }

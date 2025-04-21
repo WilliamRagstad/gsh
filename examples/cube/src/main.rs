@@ -2,7 +2,6 @@ use env_logger::Env;
 use libgsh::{
     cert,
     frame::optimize_segments,
-    rustls::ServerConfig,
     shared::{
         protocol::{
             server_hello_ack::FrameFormat,
@@ -13,8 +12,10 @@ use libgsh::{
     },
     simple::{
         server::{Messages, SimpleServer},
-        service::{Result, SerivceError, SimpleService, SimpleServiceExt},
+        service::{SimpleService, SimpleServiceExt},
     },
+    tokio_rustls::rustls::ServerConfig,
+    Result, SerivceError,
 };
 use std::time::Instant;
 use vek::*;

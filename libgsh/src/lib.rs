@@ -6,7 +6,7 @@ pub mod simple;
 pub use rcgen;
 pub use shared;
 pub use tokio;
-pub use tokio_rustls as rustls;
+pub use tokio_rustls;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SerivceError {

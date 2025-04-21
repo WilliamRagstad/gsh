@@ -2,7 +2,6 @@ use env_logger::Env;
 use libgsh::{
     cert,
     frame::optimize_segments,
-    rustls::ServerConfig,
     shared::{
         protocol::{
             server_hello_ack::FrameFormat, window_settings, Frame, ServerHelloAck, WindowSettings,
@@ -11,8 +10,10 @@ use libgsh::{
     },
     simple::{
         server::{Messages, SimpleServer},
-        service::{Result, SimpleService, SimpleServiceExt},
+        service::{SimpleService, SimpleServiceExt},
     },
+    tokio_rustls::rustls::ServerConfig,
+    Result,
 };
 use log::trace;
 use rand::random;

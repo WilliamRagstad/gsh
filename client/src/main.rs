@@ -51,10 +51,13 @@ fn main() {
             });
     println!("Successfully connected to server!");
 
-    let mut client = Client::new(sdl, video, format, messages).unwrap_or_else(|e| {
-        log::error!("Failed to create client: {}", e);
-        exit(1);
-    });
+    let mut client = match Client::new(sdl, video, format, messages) {
+        Ok(client) => client,
+        Err(e) => {
+            log::error!("Failed to create client: {}", e);
+            exit(1);
+        }
+    };
 
     if windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
