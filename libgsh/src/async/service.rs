@@ -124,7 +124,6 @@ pub trait AsyncServiceExt: AsyncService {
 
             // Sleep for the tick interval to maintain the desired FPS
             tokio::time::sleep(std::time::Duration::from_nanos(Self::TICK_INTERVAL)).await;
-            log::trace!("Ticking service...");
         }
         log::trace!("Service main loop exited.");
         Ok(())
