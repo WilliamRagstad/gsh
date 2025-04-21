@@ -1,14 +1,10 @@
 use super::service::SimpleService;
-use crate::Result;
-use shared::{protocol::client_hello, sync::MessageCodec};
-use std::{
-    net::{TcpListener, TcpStream},
-    sync::Arc,
-};
+use crate::{simple::Messages, Result};
+use shared::protocol::client_hello;
+use std::{net::TcpListener, sync::Arc};
 use tokio_rustls::rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 const DEFAULT_PORT: u16 = 1122;
-pub type Messages = MessageCodec<StreamOwned<ServerConnection, TcpStream>>;
 
 /// A simple server that handles client connections and manages the application service implementing the `SimpleService` trait.
 /// The server listens for incoming connections and spawns a new thread for each new client.

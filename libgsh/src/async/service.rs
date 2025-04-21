@@ -1,4 +1,4 @@
-use super::server::AsyncMessages;
+use super::Messages;
 use crate::Result;
 use async_trait::async_trait;
 use shared::{
@@ -23,9 +23,9 @@ pub trait AsyncService: Send + Sync + 'static {
 
     /// Main event loop for the service.\
     /// This is running in a separate thread, handling client events and sending frames back to the client.
-    async fn main<'a>(self, messages: AsyncMessages) -> Result<()>
+    async fn main(self, messages: Messages) -> Result<()>
     where
-        Self: Sized + Send + Sync;
+        Self: Sized;
 }
 
 /// A trait extension for `AsyncService` that provides additional default functionality:
@@ -39,36 +39,36 @@ pub trait AsyncServiceExt: AsyncService {
     const TICK_INTERVAL: u64 = 1_000_000_000 / Self::FPS as u64; // in nanoseconds
     /// Startup function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
-    async fn on_startup(&mut self, _messages: &mut AsyncMessages) -> Result<()> {
+    async fn on_startup(&mut self, _messages: &mut Messages) -> Result<()> {
         Ok(())
     }
 
     /// Handle periodic tasks in the service.\
     /// This is called each iteration in the default `main` implementation event loop to perform any necessary updates.
-    async fn on_tick(&mut self, _messages: &mut AsyncMessages) -> Result<()> {
+    async fn on_tick(&mut self, _messages: &mut Messages) -> Result<()> {
         Ok(())
     }
 
     /// Handle client events in the service.\
     /// This is called for each `ClientEvent` received in the default `main` implementation event loop.
     #[allow(unused_variables)]
-    async fn on_event(&mut self, messages: &mut AsyncMessages, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
         log::trace!("Got event: {:?}", event);
         Ok(())
     }
 
     /// Graceful exit of the service.\
     /// This is called when the service receives a `StatusUpdate` event with `Exit` status.
-    async fn on_exit(&mut self, _messages: &mut AsyncMessages) -> Result<()> {
+    async fn on_exit(&mut self, _messages: &mut Messages) -> Result<()> {
         log::trace!("Exiting service...");
         Ok(())
     }
 
     /// Main event loop for the service.\
     /// This is running in a separate thread, handling client events and sending frames back to the client.
-    async fn main(mut self, mut messages: AsyncMessages) -> Result<()>
+    async fn main(mut self, mut messages: Messages) -> Result<()>
     where
-        Self: Sized + Send + Sync,
+        Self: Sized,
     {
         self.on_startup(&mut messages).await?;
 

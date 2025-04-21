@@ -1,13 +1,13 @@
 use super::service::AsyncService;
+use crate::r#async::Messages;
 use crate::Result;
-use shared::{protocol::client_hello, r#async::AsyncMessageCodec};
+use shared::protocol::client_hello;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio_rustls::rustls::ServerConfig;
-use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio_rustls::TlsAcceptor;
 
 const DEFAULT_PORT: u16 = 1122;
-pub type AsyncMessages = AsyncMessageCodec<TlsStream<TcpStream>>;
 
 /// An async server that handles client connections and manages the application service implementing the `AsyncService` trait.
 /// The server listens for incoming connections and spawns a new tasks for each client connection.\
@@ -66,7 +66,7 @@ where
             let tls_acceptor = tls_acceptor.clone();
             tokio::spawn(async move {
                 let tls_stream = tls_acceptor.accept(stream).await.unwrap();
-                let messages = AsyncMessages::new(tls_stream);
+                let messages = Messages::new(tls_stream);
                 if let Err(e) = Self::handle_client(messages, addr).await {
                     log::error!("Service error {}: {}", addr, e);
                 }
@@ -77,7 +77,7 @@ where
 
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
-    async fn handle_client(mut messages: AsyncMessages, addr: std::net::SocketAddr) -> Result<()> {
+    async fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
         let client = shared::r#async::handshake_server(
             &mut messages,
             &[shared::PROTOCOL_VERSION],

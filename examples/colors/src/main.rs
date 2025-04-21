@@ -9,8 +9,9 @@ use libgsh::{
         ClientEvent,
     },
     simple::{
-        server::{Messages, SimpleServer},
+        server::SimpleServer,
         service::{SimpleService, SimpleServiceExt},
+        Messages,
     },
     tokio_rustls::rustls::ServerConfig,
     Result,

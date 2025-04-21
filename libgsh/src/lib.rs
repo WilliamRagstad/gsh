@@ -3,6 +3,7 @@ pub mod cert;
 pub mod frame;
 pub mod simple;
 
+pub use async_trait;
 pub use rcgen;
 pub use shared;
 pub use tokio;

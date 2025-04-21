@@ -1,7 +1,13 @@
 use env_logger::Env;
 use libgsh::{
+    async_trait::async_trait,
     cert,
     frame::optimize_segments,
+    r#async::{
+        server::AsyncServer,
+        service::{AsyncService, AsyncServiceExt},
+        Messages,
+    },
     shared::{
         protocol::{
             server_hello_ack::FrameFormat,
@@ -10,11 +16,8 @@ use libgsh::{
         },
         ClientEvent,
     },
-    simple::{
-        server::{Messages, SimpleServer},
-        service::{SimpleService, SimpleServiceExt},
-    },
-    tokio_rustls::rustls::ServerConfig,
+    tokio,
+    tokio_rustls::rustls::{crypto::ring, ServerConfig},
     Result, SerivceError,
 };
 use std::time::Instant;
@@ -26,7 +29,8 @@ const INITIAL_WIDTH: usize = 200;
 const INITIAL_HEIGHT: usize = 200;
 const MAX_FPS: u32 = 24; // 1 FPS for simplicity
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -35,12 +39,15 @@ fn main() {
         .init();
 
     let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
+    ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
     let config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<CubeService> = SimpleServer::new(config);
-    server.serve().unwrap();
+    let server: AsyncServer<CubeService> = AsyncServer::new(config);
+    server.serve().await.unwrap();
 }
 
 pub struct CubeService {
@@ -51,20 +58,22 @@ pub struct CubeService {
 }
 
 impl CubeService {
-    fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
+    async fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
         let frame = self.draw_cube();
-        messages.write_message(Frame {
-            window_id: WINDOW_ID,
-            segments: optimize_segments(
-                &frame,
-                self.width,
-                self.height,
-                &mut self.prev_frame,
-                PIXEL_BYTES,
-            ),
-            width: self.width as u32,
-            height: self.height as u32,
-        })?;
+        messages
+            .write_message(Frame {
+                window_id: WINDOW_ID,
+                segments: optimize_segments(
+                    &frame,
+                    self.width,
+                    self.height,
+                    &mut self.prev_frame,
+                    PIXEL_BYTES,
+                ),
+                width: self.width as u32,
+                height: self.height as u32,
+            })
+            .await?;
         Ok(())
     }
 
@@ -165,7 +174,8 @@ impl CubeService {
     }
 }
 
-impl SimpleService for CubeService {
+#[async_trait]
+impl AsyncService for CubeService {
     fn new() -> Self {
         Self {
             start: Instant::now(),
@@ -175,8 +185,8 @@ impl SimpleService for CubeService {
         }
     }
 
-    fn main(self, messages: Messages) -> Result<()> {
-        <Self as SimpleServiceExt>::main(self, messages)
+    async fn main(self, messages: Messages) -> Result<()> {
+        <Self as AsyncServiceExt>::main(self, messages).await
     }
 
     fn server_hello() -> ServerHelloAck {
@@ -198,25 +208,26 @@ impl SimpleService for CubeService {
     }
 }
 
-impl SimpleServiceExt for CubeService {
+#[async_trait]
+impl AsyncServiceExt for CubeService {
     const FPS: u32 = MAX_FPS;
 
-    fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages)
+    async fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
+        self.send_frame(messages).await
     }
 
-    fn on_tick(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages)
+    async fn on_tick(&mut self, messages: &mut Messages) -> Result<()> {
+        self.send_frame(messages).await
     }
 
-    fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = &event {
             if let InputEvent::WindowEvent(window_event) = input.input_event.unwrap() {
                 if window_event.action == WindowAction::Resize as i32 {
                     if input.window_id == WINDOW_ID {
                         self.width = window_event.width as usize;
                         self.height = window_event.height as usize;
-                        self.send_frame(messages)?;
+                        self.send_frame(messages).await?;
                         log::info!(
                             "WindowEvent: Resize event for window {}: {}x{}",
                             input.window_id,

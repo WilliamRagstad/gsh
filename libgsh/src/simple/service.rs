@@ -1,4 +1,4 @@
-use super::server::Messages;
+use super::Messages;
 use crate::{Result, SerivceError};
 use shared::{
     prost::Message,
