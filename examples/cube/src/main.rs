@@ -59,7 +59,7 @@ pub struct CubeService {
 
 impl CubeService {
     async fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
-        let frame = self.draw_cube();
+        let frame = self.draw_cube(4);
         messages
             .write_message(Frame {
                 window_id: WINDOW_ID,
@@ -78,7 +78,7 @@ impl CubeService {
         Ok(())
     }
 
-    fn draw_cube(&self) -> Vec<u8> {
+    fn draw_cube(&self, stroke_width: usize) -> Vec<u8> {
         let mut frame = vec![0u8; self.width * self.height * PIXEL_BYTES];
 
         // Define cube vertices
@@ -115,17 +115,12 @@ impl CubeService {
         let rot_y: Mat4<f32> = Mat4::rotation_y(angle * 0.7);
         let model: Mat4<f32> = rot_y * rot_x;
 
-        // log::trace!("Angle: {}", angle);
-        // log::trace!("Rotation X: {:?}", rot_x);
-        // log::trace!("Rotation Y: {:?}", rot_y);
-        // log::trace!("Model Matrix: {:?}", model);
-
         // Project vertices
         let projected: Vec<(i32, i32)> = vertices
             .iter()
             .map(|v| {
-                let v4 = Vec4::new(v.x, v.y, v.z, 1.0); // Konvertera Vec3 till Vec4 med w = 1.0
-                let transformed = model * v4; // Multiplicera matrisen med vektorn
+                let v4 = Vec4::new(v.x, v.y, v.z, 1.0); // Convert Vec3 to Vec4 with w = 1.0
+                let transformed = model * v4; // Multiply matrix with vector
                 let perspective = 1.5 / (transformed.z + 2.5);
                 let x = ((transformed.x * perspective + 0.5) * self.width as f32) as i32;
                 let y = ((-transformed.y * perspective + 0.5) * self.height as f32) as i32;
@@ -135,13 +130,25 @@ impl CubeService {
 
         // Draw edges
         for (a, b) in edges {
-            Self::draw_line(projected[a], projected[b], &mut frame, self.width);
+            Self::draw_line(
+                projected[a],
+                projected[b],
+                &mut frame,
+                self.width,
+                stroke_width,
+            );
         }
 
         frame
     }
 
-    fn draw_line((x0, y0): (i32, i32), (x1, y1): (i32, i32), frame: &mut [u8], width: usize) {
+    fn draw_line(
+        (x0, y0): (i32, i32),
+        (x1, y1): (i32, i32),
+        frame: &mut [u8],
+        width: usize,
+        stroke_width: usize,
+    ) {
         let dx = (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
@@ -151,12 +158,17 @@ impl CubeService {
 
         loop {
             if x >= 0 && y >= 0 {
-                let idx = (y as usize * width + x as usize) * PIXEL_BYTES;
-                if idx + 3 < frame.len() {
-                    frame[idx] = 255;
-                    frame[idx + 1] = 255;
-                    frame[idx + 2] = 255;
-                    frame[idx + 3] = 255;
+                for i in 0..stroke_width {
+                    for j in 0..stroke_width {
+                        let idx = ((y + i as i32) as usize * width + (x + j as i32) as usize)
+                            * PIXEL_BYTES;
+                        if idx + 3 < frame.len() {
+                            frame[idx] = 255;
+                            frame[idx + 1] = 255;
+                            frame[idx + 2] = 255;
+                            frame[idx + 3] = 255;
+                        }
+                    }
                 }
             }
             if x == x1 && y == y1 {
