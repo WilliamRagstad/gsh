@@ -2,7 +2,7 @@ use env_logger::Env;
 use libgsh::{
     async_trait::async_trait,
     cert,
-    frame::optimize_segments,
+    frame::full_frame_segment,
     r#async::{
         server::AsyncServer,
         service::{AsyncService, AsyncServiceExt},
@@ -54,7 +54,7 @@ pub struct CubeService {
     start: Instant,
     width: usize,
     height: usize,
-    prev_frame: Vec<u8>,
+    // prev_frame: Vec<u8>,
 }
 
 impl CubeService {
@@ -63,17 +63,18 @@ impl CubeService {
         messages
             .write_message(Frame {
                 window_id: WINDOW_ID,
-                segments: optimize_segments(
+                segments: full_frame_segment(
                     &frame,
                     self.width,
                     self.height,
-                    &mut self.prev_frame,
-                    PIXEL_BYTES,
+                    // &mut self.prev_frame,
+                    // PIXEL_BYTES,
                 ),
                 width: self.width as u32,
                 height: self.height as u32,
             })
             .await?;
+        log::trace!("Frame sent: {}x{}", self.width, self.height);
         Ok(())
     }
 
@@ -181,7 +182,7 @@ impl AsyncService for CubeService {
             start: Instant::now(),
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
-            prev_frame: Vec::new(),
+            // prev_frame: Vec::new(),
         }
     }
 
@@ -221,6 +222,7 @@ impl AsyncServiceExt for CubeService {
     }
 
     async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+        log::trace!("Got event: {:?}", event);
         if let ClientEvent::UserInput(input) = &event {
             if let InputEvent::WindowEvent(window_event) = input.input_event.unwrap() {
                 if window_event.action == WindowAction::Resize as i32 {
