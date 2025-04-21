@@ -25,9 +25,9 @@ use vek::*;
 
 const PIXEL_BYTES: usize = 4; // RGBA
 const WINDOW_ID: u32 = 0;
-const INITIAL_WIDTH: usize = 200;
-const INITIAL_HEIGHT: usize = 200;
-const MAX_FPS: u32 = 24; // 1 FPS for simplicity
+const INITIAL_WIDTH: usize = 300;
+const INITIAL_HEIGHT: usize = 300;
+const MAX_FPS: u32 = 120; // 1 FPS for simplicity
 
 #[tokio::main]
 async fn main() {
