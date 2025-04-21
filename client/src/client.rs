@@ -266,7 +266,7 @@ impl Client {
                             log::trace!("StatusUpdate: {:?}", status_update);
                         }
                     } else {
-                        panic!("Failed to decode message: {:?}", buf);
+                        panic!("Failed to decode message: {:?}", &buf[..]);
                     }
                 }
                 Err(err) => match err.kind() {

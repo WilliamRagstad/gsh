@@ -13,7 +13,8 @@ pub struct AsyncMessageCodec<S: AsyncRead + AsyncWrite + Send + Unpin> {
     stream: S,
     /// The buffer to store the read data.
     buf: Vec<u8>,
-
+    /// The length of the message to be read.
+    length: usize,
     partial_read: bool,
 }
 
@@ -22,6 +23,7 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
         Self {
             stream,
             buf: Vec::new(),
+            length: 0,
             partial_read: false,
         }
     }
@@ -38,16 +40,18 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
         if !self.partial_read {
             let mut length_buf = [0; LENGTH_SIZE];
             timeout(read_timeout, self.stream.read_exact(&mut length_buf)).await??;
-            let length = LengthType::from_be_bytes(length_buf) as usize;
-            self.buf.resize(length, 0);
+            self.length = LengthType::from_be_bytes(length_buf) as usize;
+            self.buf.resize(self.length, 0);
         }
         self.partial_read = true;
         timeout(read_timeout, self.stream.read_exact(&mut self.buf)).await??;
         // Convert the Vec<u8> to Bytes for better performance
         // and to avoid unnecessary allocations.
-        let bytes = prost::bytes::Bytes::from(self.buf.clone());
-        self.buf.clear(); // Clear the buffer for future reads
-                          // If we managed to get here, no exception was thrown and we have a complete message.
+        let bytes = prost::bytes::Bytes::from(std::mem::replace(
+            &mut self.buf,
+            Vec::with_capacity(self.length),
+        ));
+        // If we managed to get here, no exception was thrown and we have a complete message.
         self.partial_read = false;
         Ok(bytes)
     }
@@ -58,6 +62,7 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
         let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
         let length = message.len() as LengthType;
         let length_buf = length.to_be_bytes();
+        assert_eq!(length_buf.len(), LENGTH_SIZE);
         buf.extend_from_slice(&length_buf);
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf).await?;

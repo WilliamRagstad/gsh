@@ -59,6 +59,7 @@ impl<S: Read + Write + Send> MessageCodec<S> {
         let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
         let length = message.len() as LengthType;
         let length_buf = length.to_be_bytes();
+        assert_eq!(length_buf.len(), LENGTH_SIZE);
         buf.extend_from_slice(&length_buf);
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf)?;
