@@ -274,7 +274,7 @@ impl Client {
                     }
                 }
                 Err(err) => match err.kind() {
-                    std::io::ErrorKind::WouldBlock => (), // No data available yet, do nothing
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => (), // No data available yet, do nothing
                     std::io::ErrorKind::UnexpectedEof
                     | std::io::ErrorKind::ConnectionAborted
                     | std::io::ErrorKind::ConnectionRefused
