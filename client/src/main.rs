@@ -4,6 +4,7 @@ use clap::Parser;
 use client::Client;
 use shared::protocol::{
     client_hello::MonitorInfo,
+    server_hello_ack::FrameFormat,
     window_settings::{self, WindowMode},
     WindowSettings,
 };
@@ -25,7 +26,8 @@ struct Args {
     insecure: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_timestamp(None)
@@ -43,12 +45,17 @@ fn main() {
     });
 
     println!("Connecting to {}:{}...", args.host, args.port);
-    let (windows, format, messages) =
+    let (hello, messages) =
         network::connect_tls(&args.host, args.port, args.insecure, monitor_info(&video))
+            .await
             .unwrap_or_else(|e| {
                 log::error!("Failed to connect: {}", e);
                 exit(1);
             });
+    let format: FrameFormat = hello.format.try_into().unwrap_or_else(|_| {
+        log::error!("Failed to parse frame format: {}", hello.format);
+        exit(1);
+    });
     println!("Successfully connected to server!");
 
     let mut client = match Client::new(sdl, video, format, messages) {
@@ -59,7 +66,7 @@ fn main() {
         }
     };
 
-    if windows.is_empty() {
+    if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
         client
             .create_window(&default_window(args.host))
@@ -68,20 +75,20 @@ fn main() {
                 exit(1);
             });
     } else {
-        log::info!("Creating {} windows...", windows.len());
-        for ws in windows {
+        log::info!("Creating {} windows...", hello.windows.len());
+        for ws in hello.windows {
             client.create_window(&ws).unwrap_or_else(|e| {
                 log::error!("Failed to create window: {}", e);
                 exit(1);
             });
         }
     }
-    if let Err(e) = client.main() {
+    if let Err(e) = client.main().await {
         log::error!("Client error: {}", e);
         exit(1);
     }
 
-    let _ = network::shutdown_tls(client.messages());
+    let _ = network::shutdown_tls(client.messages()).await;
 }
 
 fn monitor_info(video: &sdl2::VideoSubsystem) -> Vec<MonitorInfo> {

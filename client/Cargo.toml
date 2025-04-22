@@ -6,13 +6,10 @@ edition = "2021"
 [dependencies]
 shared = { path = "../shared" }
 clap = { version = "4.5.35", features = ["derive"] }
-rustls = { version = "0.23.26", features = [
-	"ring",
-	"std",
-], default-features = false }
 webpki-roots = "0.26.8"
 sdl2 = { version = "0.37.0", features = ["static-link", "bundled"] }
 log = "0.4.27"
 env_logger = "0.11.8"
 anyhow = "1.0.97"
 tokio = { version = "1.44.2", features = ["full"] }
+tokio-rustls = { version = "0.26.2", features = ["ring"] }
