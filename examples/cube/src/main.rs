@@ -27,7 +27,7 @@ const PIXEL_BYTES: usize = 4; // RGBA
 const WINDOW_ID: u32 = 0;
 const INITIAL_WIDTH: usize = 300;
 const INITIAL_HEIGHT: usize = 300;
-const MAX_FPS: u32 = 120; // 1 FPS for simplicity
+const MAX_FPS: u32 = 2; // 1 FPS for simplicity
 
 #[tokio::main]
 async fn main() {
@@ -223,7 +223,7 @@ impl AsyncService for CubeService {
 
 #[async_trait]
 impl AsyncServiceExt for CubeService {
-    const FPS: u32 = MAX_FPS;
+    const MAX_FPS: u32 = MAX_FPS;
 
     async fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
         self.send_frame(messages).await

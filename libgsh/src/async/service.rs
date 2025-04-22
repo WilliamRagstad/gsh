@@ -35,8 +35,8 @@ pub trait AsyncService: Send + Sync + 'static {
 /// - `handle_event` method to handle client events.
 #[async_trait]
 pub trait AsyncServiceExt: AsyncService {
-    const FPS: u32 = 60;
-    const TICK_INTERVAL: u64 = 1_000_000_000 / Self::FPS as u64; // in nanoseconds
+    const MAX_FPS: u32 = 60;
+    const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
     /// Startup function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
     async fn on_startup(&mut self, _messages: &mut Messages) -> Result<()> {
@@ -73,6 +73,7 @@ pub trait AsyncServiceExt: AsyncService {
         self.on_startup(&mut messages).await?;
 
         log::trace!("Starting service main loop...");
+        let mut last_frame_time = std::time::Instant::now();
         'running: loop {
             // Read messages from the client connection
             // This is a non-blocking call, so it will return immediately even if no data is available
@@ -123,7 +124,14 @@ pub trait AsyncServiceExt: AsyncService {
             self.on_tick(&mut messages).await?;
 
             // Sleep for the tick interval to maintain the desired FPS
-            tokio::time::sleep(std::time::Duration::from_nanos(Self::TICK_INTERVAL)).await;
+            let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
+            if elapsed_time < Self::FRAME_TIME_NS {
+                tokio::time::sleep(std::time::Duration::from_nanos(
+                    Self::FRAME_TIME_NS - elapsed_time,
+                ))
+                .await;
+            }
+            last_frame_time = std::time::Instant::now();
         }
         log::trace!("Service main loop exited.");
         Ok(())

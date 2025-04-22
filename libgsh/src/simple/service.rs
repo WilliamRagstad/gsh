@@ -31,8 +31,8 @@ pub trait SimpleService {
 /// - `tick` method to perform periodic tasks.
 /// - `handle_event` method to handle client events.
 pub trait SimpleServiceExt: SimpleService {
-    const FPS: u32 = 60;
-    const TICK_INTERVAL: u64 = 1_000_000_000 / Self::FPS as u64; // in nanoseconds
+    const MAX_FPS: u32 = 60;
+    const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
     /// Startup function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
     fn on_startup(&mut self, _messages: &mut Messages) -> Result<()> {
@@ -73,6 +73,7 @@ pub trait SimpleServiceExt: SimpleService {
         messages.get_stream().sock.set_nonblocking(true)?;
 
         log::trace!("Starting service main loop...");
+        let mut last_frame_time = std::time::Instant::now();
         'running: loop {
             // Read messages from the client connection
             // This is a non-blocking call, so it will return immediately even if no data is available
@@ -128,7 +129,16 @@ pub trait SimpleServiceExt: SimpleService {
             allow_wouldblock(self.on_tick(&mut messages))?;
 
             // Sleep for the tick interval to maintain the desired FPS
-            std::thread::sleep(std::time::Duration::from_nanos(Self::TICK_INTERVAL));
+            std::thread::sleep(std::time::Duration::from_nanos(Self::FRAME_TIME_NS));
+
+            // Sleep for the tick interval to maintain the desired FPS
+            let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
+            if elapsed_time < Self::FRAME_TIME_NS {
+                std::thread::sleep(std::time::Duration::from_nanos(
+                    Self::FRAME_TIME_NS - elapsed_time,
+                ));
+            }
+            last_frame_time = std::time::Instant::now();
         }
         log::trace!("Service main loop exited.");
         Ok(())
