@@ -10,20 +10,20 @@ pub use tokio;
 pub use tokio_rustls;
 
 #[derive(Debug, thiserror::Error)]
-pub enum SerivceError {
+pub enum ServiceError {
     IoError(#[from] std::io::Error),
     RustlsError(#[from] tokio_rustls::rustls::Error),
     AnyError(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl std::fmt::Display for SerivceError {
+impl std::fmt::Display for ServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SerivceError::IoError(err) => write!(f, "IO error: {}", err),
-            SerivceError::RustlsError(err) => write!(f, "Rustls error: {}", err),
-            SerivceError::AnyError(err) => write!(f, "{}", err),
+            ServiceError::IoError(err) => write!(f, "IO error: {}", err),
+            ServiceError::RustlsError(err) => write!(f, "Rustls error: {}", err),
+            ServiceError::AnyError(err) => write!(f, "{}", err),
         }
     }
 }
 
-pub type Result<T> = std::result::Result<T, SerivceError>;
+pub type Result<T> = std::result::Result<T, ServiceError>;
