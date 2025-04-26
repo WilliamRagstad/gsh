@@ -1,59 +1,56 @@
+use std::sync::Arc;
+
 use anyhow::Result;
-use rustls::{
-    client::danger::{ServerCertVerified, ServerCertVerifier},
-    crypto::{ring as provider, CryptoProvider},
-    time_provider, ClientConnection, StreamOwned,
-};
 use shared::{
     protocol::{
         self,
         client_hello::MonitorInfo,
-        server_hello_ack::FrameFormat,
         status_update::{Details, Exit, StatusType},
-        WindowSettings,
+        ServerHelloAck,
     },
-    MessageCodec,
+    r#async::AsyncMessageCodec,
 };
-use std::{net::TcpStream, sync::Arc};
+use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio_rustls::rustls::{
+    self,
+    client::danger::{ServerCertVerified, ServerCertVerifier},
+    crypto::{ring as provider, CryptoProvider},
+    time_provider,
+};
+// use std::{net::TcpStream, sync::Arc};
+use tokio_rustls::{client::TlsStream, TlsConnector};
 
-pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
+// pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
+pub type Messages = AsyncMessageCodec<TlsStream<TcpStream>>;
 
-pub fn shutdown_tls(messages: &mut Messages) -> Result<()> {
+pub async fn shutdown_tls(messages: &mut Messages) -> Result<()> {
     log::trace!("Exiting gracefully...");
-    messages.get_stream().conn.send_close_notify();
-    messages.write_message(protocol::StatusUpdate {
-        kind: StatusType::Exit as i32,
-        details: Some(Details::Exit(Exit {})),
-    })?;
+    messages.get_stream().get_mut().1.send_close_notify();
     messages
-        .get_stream()
-        .sock
-        .shutdown(std::net::Shutdown::Both)?;
+        .write_message(protocol::StatusUpdate {
+            kind: StatusType::Exit as i32,
+            details: Some(Details::Exit(Exit {})),
+        })
+        .await?;
+    messages.get_stream().get_mut().0.shutdown().await?;
     log::trace!("Connection closed.");
     Ok(())
 }
 
-pub fn connect_tls(
+pub async fn connect_tls(
     host: &str,
     port: u16,
     insecure: bool,
     monitors: Vec<MonitorInfo>,
-) -> Result<(Vec<WindowSettings>, FrameFormat, Messages)> {
+) -> Result<(ServerHelloAck, Messages)> {
     let server_name = host.to_string().try_into()?;
-    let tls_config = tls_config(insecure)?;
-    let mut conn = rustls::ClientConnection::new(Arc::new(tls_config), server_name)?;
-    let mut sock = TcpStream::connect(format!("{}:{}", host, port))?;
-    conn.complete_io(&mut sock)?; // Complete the handshake with the stream
-    let tls_stream = rustls::StreamOwned::new(conn, sock);
-
-    // Check if the handshake was successful
-    if tls_stream.conn.is_handshaking() {
-        return Err(anyhow::anyhow!("Handshake failed"));
-    }
+    let tls_config = Arc::new(tls_config(insecure)?);
+    let tls_connector = TlsConnector::from(tls_config);
+    let sock = TcpStream::connect(format!("{}:{}", host, port)).await?;
+    let tls_stream = tls_connector.connect(server_name, sock).await?;
     let mut messages = Messages::new(tls_stream);
-    let hello = shared::handshake_client(&mut messages, monitors)?;
-    let format: FrameFormat = hello.format.try_into()?;
-    Ok((hello.windows, format, messages))
+    let hello = shared::r#async::handshake_client(&mut messages, monitors).await?;
+    Ok((hello, messages))
 }
 
 fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {
