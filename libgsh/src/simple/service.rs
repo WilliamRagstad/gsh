@@ -1,5 +1,5 @@
 use super::Messages;
-use crate::{Result, SerivceError};
+use crate::{Result, ServiceError};
 use shared::{
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
@@ -155,7 +155,7 @@ fn allow_wouldblock<T: Default>(result: Result<T>) -> Result<T> {
     match &result {
         Ok(_) => result,
         Err(err) => match err {
-            SerivceError::IoError(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            ServiceError::IoError(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 log::trace!("Caught WouldBlock error, returning default value.");
                 Ok(T::default())
             }

@@ -18,7 +18,7 @@ use libgsh::{
     },
     tokio,
     tokio_rustls::rustls::{crypto::ring, ServerConfig},
-    Result, SerivceError,
+    Result, ServiceError,
 };
 use std::time::Instant;
 use vek::*;
@@ -255,7 +255,7 @@ impl AsyncServiceExt for CubeService {
                         );
                     }
                 } else if window_event.action == WindowAction::Close as i32 {
-                    return Err(SerivceError::AnyError("Window closed".into()));
+                    return Err(ServiceError::AnyError("Window closed".into()));
                 }
             }
         }
