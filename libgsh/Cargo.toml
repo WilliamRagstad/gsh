@@ -17,30 +17,7 @@ categories = [
 license-file = "../LICENSE"
 repository = "https://github.com/WilliamRagstad/gsh"
 documentation = "https://docs.rs/libgsh/"
-keywords = [
-	"gsh",
-	"libgsh",
-	"graphical shell",
-	"shell",
-	"server",
-	"backend",
-	"library",
-	"SDK",
-	"api",
-	"protocol",
-	"graphics",
-	"network programming",
-	"networking",
-	"network",
-	"asynchronous",
-	"rendering",
-	"virtualization",
-	"visualization",
-	"video",
-	"audio",
-	"stream",
-	"streaming",
-]
+keywords = ["graphics", "shell", "network", "gui", "server"]
 
 [dependencies]
 rcgen = "0.13.2"
