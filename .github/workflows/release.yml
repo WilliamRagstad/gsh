@@ -15,8 +15,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { suffix: _x64_linux,   os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
-          - { suffix: _x64_win, os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
+          - { os: ubuntu-latest, os_short: "linux", target: x86_64-unknown-linux-gnu, arch: "x64", exe: ""     }
+          - { os: windows-latest, os_short: "win",  target: x86_64-pc-windows-msvc  , arch: "x64", exe: ".exe" }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -38,14 +38,22 @@ jobs:
     - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
 
-    - name: Copy binary with suffix
+    - name: Derive version
+      id: vars
+      shell: bash
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >>"$GITHUB_ENV"
+
+    - name: Copy binary with release filename
+      shell: bash
       run: |
-        cp "target/${{ matrix.target }}/release/gsh${{ matrix.exe }}" "gsh_${{ matrix.suffix }}${{ matrix.exe }}"
+        RELEASE_FILE="gsh-${VERSION}-${{ matrix.arch }}-${{ matrix.os_short }}${{ matrix.exe }}"
+        cp target/${{ matrix.target }}/release/gsh${{ matrix.exe }} "$RELEASE_FILE"
+        echo "RELEASE_FILE=$RELEASE_FILE" >>"$GITHUB_ENV"
 
     - uses: actions/upload-artifact@v4
       with:
-        name: gsh-${{ matrix.suffix }}
-        path: gsh_${{ matrix.suffix }}${{ matrix.exe }}
+        name: ${{ env.RELEASE_FILE }}
+        path: ${{ env.RELEASE_FILE }}
 
   release:
     name: Create GitHub Release
@@ -56,8 +64,7 @@ jobs:
     steps:
     - uses: actions/download-artifact@v4
       with:
-        pattern: gsh-*        # grab every artifact we just built
-        path: dist            # put them in one folder
+        path: dist
         merge-multiple: true
 
     - uses: softprops/action-gh-release@v2
