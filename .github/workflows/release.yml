@@ -21,14 +21,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        target: ${{ matrix.target }}
+		- uses: actions-rs/toolchain@v1
+		with:
+		  toolchain: stable
+		  target: ${{ matrix.target }}
 
-    - name: Install deps (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+	  # ----------------------------------
+	  #     Install protoc everywhere
+	  #     (one step, cross-platform)
+	  # ----------------------------------
+	  - name: Install Protoc
+		uses: arduino/setup-protoc@v3
+		with:
+		  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
 
     - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
