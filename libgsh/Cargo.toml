@@ -17,7 +17,6 @@ categories = [
 license-file = "../LICENSE"
 repository = "https://github.com/WilliamRagstad/gsh"
 documentation = "https://docs.rs/libgsh/"
-im-a-teapot = false
 keywords = [
 	"gsh",
 	"libgsh",
