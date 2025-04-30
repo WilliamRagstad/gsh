@@ -9,7 +9,7 @@ categories = [
 	"api-bindings",
 	"gui",
 	"graphics",
-	"network programming",
+	"network-programming",
 ]
 license-file = "../LICENSE"
 repository = "https://github.com/WilliamRagstad/gsh"
