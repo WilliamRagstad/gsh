@@ -4,10 +4,13 @@
 <p align="center">
 	<a href="https://github.com/WilliamRagstad/gsh/actions"><img src="https://img.shields.io/github/actions/workflow/status/WilliamRagstad/gsh/rust.yml?style=flat-square&color=6b0" alt="Build Status"></a>
     <img src="https://img.shields.io/badge/built_with-Rust-dca282.svg?style=flat-square" alt="Built with Rust">
-    <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a>
-	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=6b0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a>
-	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=6b0&label=libgsh%20downloads&style=flat-square" alt="Rust Crate Downloads"></a>
     <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
+	<br>
+    <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a>
+	<a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=%23ff00a0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
+	&nbsp;
+	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=6b0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a>
+	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=6b0&label=libgsh%20dls&style=flat-square" alt="Rust Crate Downloads"></a>
 </p>
 <br>
 
@@ -20,6 +23,7 @@ It shippes with a SSH-like client application (`gsh`) that allows users to conne
 All rendering and graphical elements are handled by the server, while the client seamlessly streams user interactions and input to the server for processing.
 
 > ## [Client Application](client/README.md)
+> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a>
 >
 > The client application is a cross-platform native window that interfaces with graphical server applications in a seamless and intuitive manner.
 >
