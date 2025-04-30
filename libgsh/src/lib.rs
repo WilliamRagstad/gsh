@@ -1,3 +1,9 @@
+//! # Lib Graphical Shell (libgsh)
+//!
+//! This library provides a framework for creating graphical shell applications using Rust.
+//! It includes support for both synchronous and asynchronous services, as well as TLS support using Rustls.
+//! It also provides a simple server implementation for handling client connections and managing the application service.
+
 pub mod r#async;
 pub mod cert;
 pub mod frame;

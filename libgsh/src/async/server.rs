@@ -20,7 +20,7 @@ const DEFAULT_PORT: u16 = 1122;
 ///     .with_single_cert(vec![key.cert.der().clone()], private_key)?;
 /// let server = AsyncServer::new(config);
 /// server.serve()?
-/// `````
+/// ```
 #[derive(Debug, Clone)]
 pub struct AsyncServer<ServiceT: AsyncService> {
     _service: std::marker::PhantomData<ServiceT>,
