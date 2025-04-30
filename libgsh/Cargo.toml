@@ -3,7 +3,6 @@ name = "libgsh"
 version = "0.1.1"
 edition = "2021"
 description = "Graphical Shell server SDK library"
-license = "MIT"
 categories = [
 	"rendering",
 	"api-bindings",
