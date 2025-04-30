@@ -1,4 +1,4 @@
-name: Release
+name: Client Release
 
 # Needed so the release job can publish assets
 permissions:
@@ -10,12 +10,12 @@ on:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }} • ${{ matrix.target }})
+    name: Build Client (${{ matrix.os }} • ${{ matrix.target }})
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
+          - { suffix: x64_linux,   os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
+          - { suffix: x64_windows, os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -30,12 +30,12 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-    - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+    - name: Build Client
+      run: cargo build -p gsh --release --target ${{ matrix.target }}
 
     - uses: actions/upload-artifact@v4
       with:
-        name: gsh-${{ matrix.target }}
+        name: gsh-${{ matrix.suffix }}
         path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
 
   release:
