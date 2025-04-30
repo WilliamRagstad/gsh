@@ -13,7 +13,7 @@ const DEFAULT_PORT: u16 = 1122;
 /// The server listens for incoming connections and spawns a new tasks for each client connection.\
 ///
 /// # Example: Self-Signed
-/// ```
+/// ```ignore
 /// let (key, private_key) = cert::self_signed(&["localhost"])?;
 /// let config = ServerConfig::builder()
 ///     .with_no_client_auth()
