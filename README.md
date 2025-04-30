@@ -6,7 +6,7 @@
     <img src="https://img.shields.io/badge/built_with-Rust-dca282.svg?style=flat-square" alt="Built with Rust">
 	<a href="https://github.com/WilliamRagstad/gsh/actions"><img src="https://img.shields.io/github/actions/workflow/status/WilliamRagstad/gsh/rust.yml?style=flat-square" alt="Build Status"></a>
 	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=e45928&label=Rust%20Crate&style=flat-square" alt="Rust Crate"></a>
-    <a href="https://github.com/WilliamRagstad/gsh/blob/master/LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
+    <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
 </p>
 <br>
 
