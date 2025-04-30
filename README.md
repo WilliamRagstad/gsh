@@ -1,9 +1,18 @@
 <div align="center">
   <img src="assets/logo.png" alt="Graphical Shell Logo" height="130">
 </div>
-<hr/>
+<p align="center">
+    <img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=version&sort=semver&style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/built_with-Rust-dca282.svg?style=flat-square" alt="Built with Rust">
+	<a href="https://github.com/WilliamRagstad/gsh/actions"><img src="https://img.shields.io/github/actions/workflow/status/WilliamRagstad/gsh/rust.yml?style=flat-square" alt="Build Status"></a>
+	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=e45928&label=Rust%20Crate&style=flat-square" alt="Rust Crate"></a>
+    <a href="https://github.com/WilliamRagstad/gsh/blob/master/LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
+</p>
+<br>
 
-**Graphical Shell** is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
+## What is **Graphical Shell**?
+
+It is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
 Whether you're building a personal server, a graphical Bulletin Board System (BBS), or exploring new interactive experiences, Graphical Shell provides the tools to bring your ideas to life.
 
 It shippes with a SSH-like client application (`gsh`) that allows users to connect to a server and interact with it through a graphical interface.
