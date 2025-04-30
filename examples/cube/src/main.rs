@@ -27,7 +27,7 @@ const PIXEL_BYTES: usize = 4; // RGBA
 const WINDOW_ID: u32 = 0;
 const INITIAL_WIDTH: usize = 300;
 const INITIAL_HEIGHT: usize = 300;
-const MAX_FPS: u32 = 2; // 1 FPS for simplicity
+const MAX_FPS: u32 = 60;
 
 #[tokio::main]
 async fn main() {
