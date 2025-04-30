@@ -5,14 +5,11 @@ edition = "2021"
 description = "Graphical Shell server SDK library"
 license = "MIT"
 categories = [
+	"rendering",
 	"api-bindings",
 	"gui",
 	"graphics",
 	"network programming",
-	"asynchronous",
-	"rendering",
-	"virtualization",
-	"visualization",
 ]
 license-file = "../LICENSE"
 repository = "https://github.com/WilliamRagstad/gsh"
