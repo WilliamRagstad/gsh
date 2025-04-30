@@ -6,7 +6,8 @@ permissions:
 
 on:
   push:
-    tags: [ "v*" ]
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -33,7 +34,6 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
 
       - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
