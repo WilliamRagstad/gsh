@@ -45,7 +45,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       with:
         name: gsh-${{ matrix.suffix }}
-        path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
+        path: gsh_${{ matrix.suffix }}${{ matrix.exe }}
 
   release:
     name: Create GitHub Release
