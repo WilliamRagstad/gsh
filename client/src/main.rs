@@ -28,7 +28,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
         .format_line_number(true)
         .format_timestamp(None)
         .init();
