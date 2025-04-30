@@ -1,65 +1,60 @@
 name: Release
 
+# Needed so the release job can publish assets
+permissions:
+  contents: write     # allows creating & uploading releases
+
 on:
-    push:
-        tags:
-            - "v*"
+  push:
+    tags: [ "v*" ]
 
 jobs:
-    build:
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                os: [ubuntu-latest, windows-latest]
-                target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc]
+  build:
+    name: Build (${{ matrix.os }} • ${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
+    runs-on: ${{ matrix.os }}
 
-        steps:
-        - uses: actions/checkout@v4
+    steps:
+    - uses: actions/checkout@v4
 
-        - name: Install Rust
-          uses: actions-rs/toolchain@v1
-          with:
-            toolchain: stable
-            target: ${{ matrix.target }}
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
 
-        - name: Install dependencies (Linux only)
-          if: matrix.os == 'ubuntu-latest'
-          run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+    - name: Install deps (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-        - name: Build
-          run: cargo build --release --target ${{ matrix.target }}
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }}
 
-        - name: Upload artifact
-          uses: actions/upload-artifact@v4
-          with:
-            name: gsh-${{ matrix.target }}
-            path: target/${{ matrix.target }}/release/gsh${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+    - uses: actions/upload-artifact@v4
+      with:
+        name: gsh-${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
 
-    release:
-        needs: build
-        runs-on: ubuntu-latest
-        steps:
-        - name: Download artifacts
-          uses: actions/download-artifact@v3
-          with:
-            path: artifacts
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
 
-        - name: Create Release
-          uses: actions/create-release@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            tag_name: ${{ github.ref_name }}
-            release_name: Release ${{ github.ref_name }}
-            draft: false
-            prerelease: false
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: gsh-*        # grab every artifact we just built
+        path: dist            # put them in one folder
+        merge-multiple: true
 
-        - name: Upload Release Assets
-          uses: actions/upload-release-asset@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            upload_url: ${{ steps.create_release.outputs.upload_url }}
-            asset_path: artifacts
-            asset_name: gsh-${{ matrix.target }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-            asset_content_type: application/octet-stream
+    - uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: "Release ${{ github.ref_name }}"
+        draft: false
+        prerelease: false
+        files: dist/*
