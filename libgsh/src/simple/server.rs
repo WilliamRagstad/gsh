@@ -10,14 +10,14 @@ const DEFAULT_PORT: u16 = 1122;
 /// The server listens for incoming connections and spawns a new thread for each new client.
 ///
 /// # Example: Self-Signed
-/// ```
-/// let (key, private_key) = cert::self_signed(&["localhost"])?;
+/// ```ignore
+/// let (key, private_key) = crate::cert::self_signed(&["localhost"])?;
 /// let config = ServerConfig::builder()
 ///     .with_no_client_auth()
 ///     .with_single_cert(vec![key.cert.der().clone()], private_key)?;
 /// let server = SimpleServer::new(config);
 /// server.serve()?
-/// `````
+/// ```
 #[derive(Debug, Clone)]
 pub struct SimpleServer<ServiceT: SimpleService> {
     _service: std::marker::PhantomData<ServiceT>,
