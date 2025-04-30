@@ -19,30 +19,29 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-		- uses: actions-rs/toolchain@v1
-		with:
-		  toolchain: stable
-		  target: ${{ matrix.target }}
+      - uses: actions-rs/toolchain@v1
+          with:
+          toolchain: stable
+          target: ${{ matrix.target }}
 
-	  # ----------------------------------
-	  #     Install protoc everywhere
-	  #     (one step, cross-platform)
-	  # ----------------------------------
-	  - name: Install Protoc
-		uses: arduino/setup-protoc@v3
-		with:
-		  repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # ----------------------------------
+      # Install protoc everywhere (one step, cross-platform)
+      # ----------------------------------
+      - name: Install Protoc
+          uses: arduino/setup-protoc@v3
+          with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
 
-    - name: Build Client
+      - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
 
-    - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
       with:
-        name: gsh-${{ matrix.suffix }}
-        path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
+          name: gsh-${{ matrix.suffix }}
+          path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
 
   release:
     name: Create GitHub Release
