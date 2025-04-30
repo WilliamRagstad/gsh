@@ -15,8 +15,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { suffix: x64_linux,   os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
-          - { suffix: x64_windows, os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
+          - { suffix: _x64_linux,   os: ubuntu-latest , target: x86_64-unknown-linux-gnu , exe: ""     }
+          - { suffix: _x64_win, os: windows-latest, target: x86_64-pc-windows-msvc   , exe: ".exe" }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -37,6 +37,10 @@ jobs:
 
     - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
+
+    - name: Copy binary with suffix
+      run: |
+        cp "target/${{ matrix.target }}/release/gsh${{ matrix.exe }}" "gsh_${{ matrix.suffix }}${{ matrix.exe }}"
 
     - uses: actions/upload-artifact@v4
       with:
