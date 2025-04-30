@@ -4,7 +4,7 @@
 <p align="center">
 	<a href="https://github.com/WilliamRagstad/gsh/actions"><img src="https://img.shields.io/github/actions/workflow/status/WilliamRagstad/gsh/rust.yml?style=flat-square&color=6b0" alt="Build Status"></a>
     <img src="https://img.shields.io/badge/built_with-Rust-cf6242.svg?style=flat-square" alt="Built with Rust">
-    <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
+    <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-009faf.svg?style=flat-square" alt="License"></a>
 	<br>
     <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=df00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a>
 	<a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
