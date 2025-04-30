@@ -1,6 +1,6 @@
 use std::net::TcpStream;
 
-use shared::sync::MessageCodec;
+use crate::shared::sync::MessageCodec;
 use tokio_rustls::rustls::{ServerConnection, StreamOwned};
 
 pub mod server;

@@ -1,7 +1,7 @@
 use super::service::AsyncService;
 use crate::r#async::Messages;
+use crate::shared::protocol::client_hello;
 use crate::Result;
-use shared::protocol::client_hello;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::ServerConfig;
@@ -78,9 +78,9 @@ where
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
     async fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
-        let client = shared::r#async::handshake_server(
+        let client = crate::shared::r#async::handshake_server(
             &mut messages,
-            &[shared::PROTOCOL_VERSION],
+            &[crate::shared::PROTOCOL_VERSION],
             ServiceT::server_hello(),
         )
         .await?;

@@ -7,11 +7,11 @@
 pub mod r#async;
 pub mod cert;
 pub mod frame;
+pub mod shared;
 pub mod simple;
 
 pub use async_trait;
 pub use rcgen;
-pub use shared;
 pub use tokio;
 pub use tokio_rustls;
 

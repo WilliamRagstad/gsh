@@ -1,4 +1,4 @@
-use shared::protocol::frame::Segment;
+use crate::shared::protocol::frame::Segment;
 
 pub fn full_frame_segment(
     full_frame_data: &[u8],

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use shared::{
+use libgsh::shared::{
     protocol::{
         self,
         client_hello::MonitorInfo,
@@ -49,7 +49,7 @@ pub async fn connect_tls(
     let sock = TcpStream::connect(format!("{}:{}", host, port)).await?;
     let tls_stream = tls_connector.connect(server_name, sock).await?;
     let mut messages = Messages::new(tls_stream);
-    let hello = shared::r#async::handshake_client(&mut messages, monitors).await?;
+    let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
     Ok((hello, messages))
 }
 

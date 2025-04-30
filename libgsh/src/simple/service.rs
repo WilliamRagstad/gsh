@@ -1,10 +1,10 @@
 use super::Messages;
-use crate::{Result, ServiceError};
-use shared::{
+use crate::shared::{
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
     ClientEvent,
 };
+use crate::{Result, ServiceError};
 use std::io::Write;
 
 /// A trait for a simple service that can be run in a separate thread.

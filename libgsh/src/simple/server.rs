@@ -1,6 +1,6 @@
 use super::service::SimpleService;
+use crate::shared::protocol::client_hello;
 use crate::{simple::Messages, Result};
-use shared::protocol::client_hello;
 use std::{net::TcpListener, sync::Arc};
 use tokio_rustls::rustls::{ServerConfig, ServerConnection, StreamOwned};
 
@@ -72,9 +72,9 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
     fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
-        let client = shared::sync::handshake_server(
+        let client = crate::shared::sync::handshake_server(
             &mut messages,
-            &[shared::PROTOCOL_VERSION],
+            &[crate::shared::PROTOCOL_VERSION],
             ServiceT::server_hello(),
         )?;
         let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);

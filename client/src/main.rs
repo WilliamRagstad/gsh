@@ -2,7 +2,7 @@ use std::process::exit;
 
 use clap::Parser;
 use client::Client;
-use shared::protocol::{
+use libgsh::shared::protocol::{
     client_hello::MonitorInfo,
     server_hello_ack::FrameFormat,
     window_settings::{self, WindowMode},

@@ -1,4 +1,4 @@
-use shared::r#async::AsyncMessageCodec;
+use crate::shared::r#async::AsyncMessageCodec;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 

@@ -1,11 +1,11 @@
 use super::Messages;
-use crate::Result;
-use async_trait::async_trait;
-use shared::{
+use crate::shared::{
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
     ClientEvent,
 };
+use crate::Result;
+use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
 /// A trait for an async service that can be run in a separate thread.

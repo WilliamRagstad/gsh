@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
+libgsh = { path = "../libgsh" }
 clap = { version = "4.5.35", features = ["derive"] }
 webpki-roots = "0.26.8"
 sdl2 = { version = "0.37.0", features = ["static-link", "bundled"] }

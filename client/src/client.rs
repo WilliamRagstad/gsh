@@ -1,12 +1,5 @@
 use anyhow::{anyhow, Result};
-use sdl2::{
-    event::{Event, WindowEvent},
-    pixels::PixelFormatEnum,
-    rect::Rect,
-    render::Canvas,
-    video,
-};
-use shared::{
+use libgsh::shared::{
     prost::Message,
     protocol::{
         self,
@@ -18,6 +11,13 @@ use shared::{
         window_settings::WindowMode,
         Frame, UserInput, WindowSettings,
     },
+};
+use sdl2::{
+    event::{Event, WindowEvent},
+    pixels::PixelFormatEnum,
+    rect::Rect,
+    render::Canvas,
+    video,
 };
 use std::collections::HashMap;
 
