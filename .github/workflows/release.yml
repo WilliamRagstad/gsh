@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions-rs/toolchain@v1
-          with:
+        with:
           toolchain: stable
           target: ${{ matrix.target }}
 
@@ -30,8 +30,8 @@ jobs:
       # Install protoc everywhere (one step, cross-platform)
       # ----------------------------------
       - name: Install Protoc
-          uses: arduino/setup-protoc@v3
-          with:
+        uses: arduino/setup-protoc@v3
+        with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
 
@@ -39,7 +39,7 @@ jobs:
       run: cargo build -p gsh --release --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
-      with:
+        with:
           name: gsh-${{ matrix.suffix }}
           path: target/${{ matrix.target }}/release/gsh${{ matrix.exe }}
 
