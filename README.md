@@ -7,9 +7,9 @@
     <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff.svg?style=flat-square" alt="License"></a>
 	<br>
     <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a>
-	<a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=%23ff00a0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
+	<a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
 	&nbsp;
-	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=6b0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a>
+	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=%23ff00a0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a>
 	<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=6b0&label=libgsh%20dls&style=flat-square" alt="Rust Crate Downloads"></a>
 </p>
 <br>
