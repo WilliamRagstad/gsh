@@ -1,9 +1,47 @@
 [package]
 name = "libgsh"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Graphical Shell server SDK library"
 license = "MIT"
+categories = [
+	"api-bindings",
+	"gui",
+	"graphics",
+	"network programming",
+	"asynchronous",
+	"rendering",
+	"virtualization",
+	"visualization",
+]
+license-file = "../LICENSE"
+repository = "https://github.com/WilliamRagstad/gsh"
+documentation = "https://docs.rs/libgsh/"
+im-a-teapot = false
+keywords = [
+	"gsh",
+	"libgsh",
+	"graphical shell",
+	"shell",
+	"server",
+	"backend",
+	"library",
+	"SDK",
+	"api",
+	"protocol",
+	"graphics",
+	"network programming",
+	"networking",
+	"network",
+	"asynchronous",
+	"rendering",
+	"virtualization",
+	"visualization",
+	"video",
+	"audio",
+	"stream",
+	"streaming",
+]
 
 [dependencies]
 rcgen = "0.13.2"
