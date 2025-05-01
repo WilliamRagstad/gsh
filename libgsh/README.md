@@ -1,6 +1,4 @@
-# libgsh
-
-<a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=6b0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a>
+# libgsh&nbsp; <a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=df00a0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a> <a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=6b0&label=libgsh%20dls&style=flat-square" alt="Rust Crate Downloads"></a>
 
 This is a SDK library for building server applications that interact seamlessly with the **gsh** client.
 It provides essential tools and abstractions to enable efficient communication between the server and the **gsh** graphical shell client application.
