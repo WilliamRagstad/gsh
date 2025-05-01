@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use dialoguer::Confirm;
 use libgsh::shared::{
     protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
 };
+use sha2::Digest;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_rustls::rustls::{
     self,
@@ -15,10 +16,12 @@ use tokio_rustls::rustls::{
 // use std::{net::TcpStream, sync::Arc};
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
+use crate::config;
+
 // pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 pub type Messages = AsyncMessageCodec<TlsStream<TcpStream>>;
 
-pub async fn shutdown_tls(messages: &mut Messages) -> Result<()> {
+pub async fn shutdown_tls(messages: &mut Messages) -> anyhow::Result<()> {
     log::trace!("Exiting gracefully...");
     messages.get_stream().get_mut().1.send_close_notify();
     messages
@@ -32,23 +35,7 @@ pub async fn shutdown_tls(messages: &mut Messages) -> Result<()> {
     Ok(())
 }
 
-pub async fn connect_tls(
-    host: &str,
-    port: u16,
-    insecure: bool,
-    monitors: Vec<MonitorInfo>,
-) -> Result<(ServerHelloAck, Messages)> {
-    let server_name = host.to_string().try_into()?;
-    let tls_config = Arc::new(tls_config(insecure)?);
-    let tls_connector = TlsConnector::from(tls_config);
-    let sock = TcpStream::connect(format!("{}:{}", host, port)).await?;
-    let tls_stream = tls_connector.connect(server_name, sock).await?;
-    let mut messages = Messages::new(tls_stream);
-    let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
-    Ok((hello, messages))
-}
-
-fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {
+fn tls_config(insecure: bool) -> anyhow::Result<rustls::ClientConfig> {
     let root_store = if insecure {
         rustls::RootCertStore::empty()
     } else {
@@ -72,6 +59,85 @@ fn tls_config(insecure: bool) -> Result<rustls::ClientConfig> {
             .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
     }
     Ok(config)
+}
+
+async fn verify_host(
+    known_hosts: &mut config::KnownHosts,
+    host: &str,
+    certs: &[rustls::pki_types::CertificateDer<'_>],
+) -> anyhow::Result<bool> {
+    let mut fingerprints: Vec<Vec<u8>> = Vec::new();
+    for cert in certs {
+        let fingerprint = sha2::Sha256::digest(cert.as_ref());
+        fingerprints.push(fingerprint.to_vec());
+    }
+    if let Some(known) = known_hosts.find_host(host) {
+        if known.compare(&fingerprints) {
+            log::info!("Host {} verified successfully.", host);
+            Ok(true)
+        } else {
+            log::warn!(
+                "Host {} fingerprint mismatch. Expected: {:X?}, Found: {:X?}",
+                host,
+                known.fingerprints(),
+                fingerprints
+            );
+            Ok(false)
+        }
+    } else {
+        if fingerprints.is_empty() {
+            log::error!(
+                "Host {} has no fingerprints. Use --insecure to skip verification.",
+                host
+            );
+            return Ok(false);
+        }
+        log::warn!(
+            "Host {} not found in known hosts. Please verify the host's fingerprint.",
+            host
+        );
+        println!("Host {} fingerprints: {:X?}", host, fingerprints);
+        // Prompt for confirmation
+        let confirmation = Confirm::new()
+            .with_prompt("Do you want to add this host to known hosts?")
+            .default(false)
+            .interact()?;
+        if confirmation {
+            known_hosts.add_host(host.to_string(), fingerprints.clone());
+            log::info!("Host {} added to known hosts.", host);
+            Ok(true)
+        } else {
+            log::warn!("Host {} not added to known hosts.", host);
+            Ok(false)
+        }
+    }
+}
+
+pub async fn connect_tls(
+    host: &str,
+    port: u16,
+    insecure: bool,
+    monitors: Vec<MonitorInfo>,
+    known_hosts: &mut config::KnownHosts,
+) -> anyhow::Result<(ServerHelloAck, Messages)> {
+    let server_name = host.to_string().try_into()?;
+    let tls_config = Arc::new(tls_config(insecure)?);
+    let tls_connector = TlsConnector::from(tls_config);
+    let addr = format!("{}:{}", host, port);
+    let sock = TcpStream::connect(&addr).await?;
+    let mut tls_stream = tls_connector.connect(server_name, sock).await?;
+    if !insecure {
+        let certs = tls_stream.get_ref().1.peer_certificates().unwrap();
+        if !verify_host(known_hosts, host, certs).await? {
+            tls_stream.get_mut().1.send_close_notify();
+            tls_stream.get_mut().0.shutdown().await?;
+            log::warn!("Host verification failed. Connection closed.");
+            return Err(anyhow::anyhow!("Host verification failed."));
+        }
+    }
+    let mut messages = Messages::new(tls_stream);
+    let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
+    Ok((hello, messages))
 }
 
 #[derive(Debug, Clone)]

@@ -8,6 +8,7 @@ use libgsh::shared::protocol::{
 };
 
 mod client;
+mod config;
 mod network;
 
 #[derive(Parser, Debug)]
@@ -32,6 +33,8 @@ async fn main() {
         .init();
     let args = Args::parse();
 
+    let mut known_hosts = config::KnownHosts::load();
+
     // Initialize SDL2
     let sdl = sdl2::init().unwrap_or_else(|e| {
         log::error!("Failed to initialize SDL2: {}", e);
@@ -43,13 +46,18 @@ async fn main() {
     });
 
     println!("Connecting to {}:{}...", args.host, args.port);
-    let (hello, messages) =
-        network::connect_tls(&args.host, args.port, args.insecure, monitor_info(&video))
-            .await
-            .unwrap_or_else(|e| {
-                log::error!("Failed to connect: {}", e);
-                exit(1);
-            });
+    let (hello, messages) = network::connect_tls(
+        &args.host,
+        args.port,
+        args.insecure,
+        monitor_info(&video),
+        &mut known_hosts,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        log::error!("Failed to connect: {}", e);
+        exit(1);
+    });
     let format: FrameFormat = hello.format.try_into().unwrap_or_else(|_| {
         log::error!("Failed to parse frame format: {}", hello.format);
         exit(1);
