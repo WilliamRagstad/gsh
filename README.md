@@ -22,12 +22,15 @@ Whether you're building a personal server, a graphical Bulletin Board System (BB
 It shippes with a SSH-like client application (`gsh`) that allows users to connect to a server and interact with it through a graphical interface.
 All rendering and graphical elements are handled by the server, while the client seamlessly streams user interactions and input to the server for processing.
 
-> ## [Client Application](client/README.md)&nbsp; <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
+> ---
+> ### [Client Application](client/README.md)&nbsp; <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
 >
 > The client application is a cross-platform native window that interfaces with graphical server applications in a seamless and intuitive manner.
-> Quickly install the latest release using the following command (as Administrator):
+> Quickly install the latest release using the one-liners below.
 >
 > ### Windows
+>
+> Run as administrator in `PowerShell`:
 >
 > ```powershell
 > iwr https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.ps1 | iex
@@ -39,7 +42,9 @@ All rendering and graphical elements are handled by the server, while the client
 > curl -sSfL https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.sh | sh
 > ```
 >
-> Or install the latest release binaries manually for `Linux`, `MacOS`, and `Windows` in the [releases](https://github.com/WilliamRagstad/gsh/releases) page.
+> You can also find the latest release binaries on the [releases](https://github.com/WilliamRagstad/gsh/releases) page or build from source.
+>
+> ---
 
 ## Features
 
