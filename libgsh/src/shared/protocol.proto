@@ -71,18 +71,18 @@ message ServerHelloAck {
 // Server -> Client
 message Frame {
 	uint32 window_id = 1; // Unique identifier for the window
-	uint32 width = 3;     // Width of the image in pixels
-	uint32 height = 4;    // Height of the image in pixels
+	uint32 width = 2;     // Width of the image in pixels
+	uint32 height = 3;    // Height of the image in pixels
 
 	// Partial frame segments
 	message Segment {
-		int32 x = 2;        // X coordinate of the top-left corner of the segment
-		int32 y = 3;        // Y coordinate of the top-left corner of the segment
-		uint32 width = 4;    // Width of the segment in pixels
-		uint32 height = 5;   // Height of the segment in pixels
-		bytes data = 6;      // Raw image data in bytes
+		int32 x = 1;        // X coordinate of the top-left corner of the segment
+		int32 y = 2;        // Y coordinate of the top-left corner of the segment
+		uint32 width = 3;    // Width of the segment in pixels
+		uint32 height = 4;   // Height of the segment in pixels
+		bytes data = 5;      // Raw image data in bytes
 	}
-	repeated Segment segments = 2; // List of segments in the frame
+	repeated Segment segments = 4; // List of segments in the frame
 }
 
 // Message representing user input events
@@ -168,9 +168,9 @@ message StatusUpdate {
 	}
 	StatusType kind = 1; // Type of status update
 	oneof details {
-		Info info = 3;
-		Warning warning = 4;
-		Error error = 5;
+		Info info = 2;
+		Warning warning = 3;
+		Error error = 4;
 	}
 
 	// Nested message for informational updates
