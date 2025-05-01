@@ -1,6 +1,6 @@
 # Community Creations
 
-This is a place for the community to share their custom creations built using the **gsh** library, such as:
+This is a place for the community to share their custom creations built using the `gsh` library, such as:
 
 - Personal pages
 - Online games for single players

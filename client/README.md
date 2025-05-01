@@ -1,6 +1,6 @@
 # Graphical Shell Client&nbsp; <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
 
-This is the client application for **gsh**.
+This is the client application for `gsh`.
 It provides a cross-platform native window to interface with graphical server applications in a seamless and intuitive manner.
 The client application is a cross-platform native window that interfaces with graphical server applications in a seamless and intuitive manner.
 
@@ -8,8 +8,9 @@ The client application is a cross-platform native window that interfaces with gr
 
 ## Quick Install
 
-Quickly install the latest release using the one-liners below.
-You can also find the latest release binaries on the [releases page](https://github.com/WilliamRagstad/gsh/releases) or [build from source](#build-from-source).
+Use the one-liners below to install the latest release of `gsh` on your system.
+The installation script will download the latest release and place the binary in your `PATH` for easy access.
+You can also find release binaries on the [releases page](https://github.com/WilliamRagstad/gsh/releases) or build it yourself [from source](#build-from-source).
 
 > ### Windows
 >
@@ -69,7 +70,7 @@ The compiled binary will be located in `./target/release/gsh` and can be moved t
 
 ## Contributing
 
-If you want to contribute to the development of **gsh**, follow these steps:
+If you want to contribute to the development of `gsh`, follow these steps:
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
 - Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) version 17

@@ -1,19 +1,19 @@
 # libgsh&nbsp; <a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/v/libgsh?color=df00a0&label=libgsh&style=flat-square" alt="Rust Crate Version"></a> <a href="https://crates.io/crates/libgsh"><img src="https://img.shields.io/crates/d/libgsh?color=6b0&label=libgsh%20dls&style=flat-square" alt="Rust Crate Downloads"></a>
 
-This is a SDK library for building server applications that interact seamlessly with the **gsh** client.
-It provides essential tools and abstractions to enable efficient communication between the server and the **gsh** graphical shell client application.
+This is a SDK library for building server applications that interact seamlessly with the `gsh` client.
+It provides essential tools and abstractions to enable efficient communication between the server and the `gsh` graphical shell client application.
 
 ## Features
 
-- **Server-Client Communication**: Simplifies the process of establishing and managing connections with the **gsh** client.
+- **Server-Client Communication**: Simplifies the process of establishing and managing connections with the `gsh` client.
 - **Data Serialization**: Includes utilities for encoding and decoding data exchanged between the server and client.
 - **Extensibility**: Designed to be modular and extensible, allowing developers to build custom server-side functionality.
 
-This library is an integral part of the **gsh** ecosystem, enabling developers to create robust and interactive server applications that leverage the graphical capabilities of the **gsh** client.
+This library is an integral part of the `gsh` ecosystem, enabling developers to create robust and interactive server applications that leverage the graphical capabilities of the `gsh` client.
 
 ## Build a Server
 
-Do you want to build your own service with **gsh**?
+Do you want to build your own service with `gsh`?
 Choose between these *out-of-the-box* server implementations:
 
 | Server   | Description                                                    | Technology             |
@@ -25,7 +25,7 @@ Choose between these *out-of-the-box* server implementations:
 > The `async` server provides better performance and scalability for most applications.
 
 View the [**examples**](../examples/) directory for service implementations using the `async` and `simple` servers.
-There you can view how they interact with the **gsh** client.
+There you can view how they interact with the `gsh` client.
 
 ## Prerequisites
 
