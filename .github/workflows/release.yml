@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-20.04, os_short: "linux", target: x86_64-unknown-linux-gnu, arch: "x64", exe: ""     }
+          - { os: ubuntu-22.04, os_short: "linux", target: x86_64-unknown-linux-gnu, arch: "x64", exe: ""     }
           - { os: windows-latest, os_short: "win",  target: x86_64-pc-windows-msvc  , arch: "x64", exe: ".exe" }
     runs-on: ${{ matrix.os }}
 
