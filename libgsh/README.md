@@ -27,6 +27,17 @@ Choose between these *out-of-the-box* server implementations:
 View the [**examples**](../examples/) directory for service implementations using the `async` and `simple` servers.
 There you can view how they interact with the `gsh` client.
 
+## Architecture
+
+The `libgsh` library is designed to be modular and extensible, allowing developers to build custom server-side functionality. It provides a set of abstractions and utilities that simplify the process of establishing and managing connections with the `gsh` client.
+
+```mermaid
+
+graph LR
+	C[<img src="../assets/laptop.webp"> client] -->|<img src="../assets/keyboard_mouse.png">stream user input| S1[<img src="../assets/server.webp">server];
+	S1 -->|<img src="https://upload.wikimedia.org/wikipedia/en/e/ee/Minetest_Game_Screenshot_Late_2018_5.0.0-dev.png">stream video, audio, etc.| C;
+```
+
 ## Prerequisites
 
 Install the following dependencies before proceeding with setting up your development environment:
