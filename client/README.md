@@ -11,6 +11,7 @@ The client application is a cross-platform native window that interfaces with gr
 Use the one-liners below to install the latest release of `gsh` on your system.
 The installation script will download the latest release and place the binary in your `PATH` for easy access.
 You can also find release binaries on the [releases page](https://github.com/WilliamRagstad/gsh/releases) or build it yourself [from source](#build-from-source).
+View the [compatibility](../COMPATIBILITY.md) document for more information on supported versions.
 
 > ### Windows
 >

@@ -26,6 +26,7 @@ Choose between these *out-of-the-box* server implementations:
 
 View the [**examples**](../examples/) directory for service implementations using the `async` and `simple` servers.
 There you can view how they interact with the `gsh` client.
+View the [compatibility](../COMPATIBILITY.md) document for more information on supported versions.
 
 ## Architecture
 
