@@ -4,7 +4,8 @@ use libgsh::{
     frame::optimize_segments,
     shared::{
         protocol::{
-            server_hello_ack::FrameFormat, window_settings, Frame, ServerHelloAck, WindowSettings,
+            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+            Frame, ServerHelloAck,
         },
         ClientEvent,
     },

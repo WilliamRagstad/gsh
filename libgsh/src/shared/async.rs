@@ -6,6 +6,8 @@ use prost::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 
+use super::protocol::status_update::StatusType;
+
 /// A codec for reading and writing length-value encoded messages.
 #[derive(Debug)]
 pub struct AsyncMessageCodec<S: AsyncRead + AsyncWrite + Send + Unpin> {
@@ -119,10 +121,8 @@ where
         );
         messages
             .write_message(protocol::StatusUpdate {
-                kind: protocol::status_update::StatusType::Exit as i32,
-                details: Some(protocol::status_update::Details::Exit(
-                    protocol::status_update::Exit {},
-                )),
+                kind: StatusType::Exit as i32,
+                details: None,
             })
             .await?;
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));

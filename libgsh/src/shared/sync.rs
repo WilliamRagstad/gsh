@@ -5,6 +5,8 @@ use crate::shared::{
 use prost::Message;
 use std::io::{Read, Write};
 
+use super::protocol::status_update::StatusType;
+
 /// A codec for reading and writing length-value encoded messages.
 pub struct MessageCodec<S: Read + Write + Send> {
     /// The underlying reader and writer stream.
@@ -113,10 +115,8 @@ where
             client_hello.protocol_version, supported_protocol_versions
         );
         messages.write_message(protocol::StatusUpdate {
-            kind: protocol::status_update::StatusType::Exit as i32,
-            details: Some(protocol::status_update::Details::Exit(
-                protocol::status_update::Exit {},
-            )),
+            kind: StatusType::Exit as i32,
+            details: None,
         })?;
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
     }

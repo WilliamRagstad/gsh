@@ -10,9 +10,9 @@ use libgsh::{
     },
     shared::{
         protocol::{
-            server_hello_ack::FrameFormat,
+            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
             user_input::{window_event::WindowAction, InputEvent},
-            window_settings, Frame, ServerHelloAck, WindowSettings,
+            Frame, ServerHelloAck,
         },
         ClientEvent,
     },

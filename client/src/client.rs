@@ -3,18 +3,17 @@ use libgsh::shared::{
     prost::{bytes::Bytes, Message},
     protocol::{
         self,
-        server_hello_ack::FrameFormat,
-        status_update::StatusType,
+        server_hello_ack::{window_settings::WindowMode, FrameFormat, WindowSettings},
+        status_update::{Details, StatusType},
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
             InputType,
         },
-        window_settings::WindowMode,
-        Frame, StatusUpdate, UserInput, WindowSettings,
+        Frame, StatusUpdate, UserInput,
     },
 };
 use sdl2::{
-    event::{DisplayEvent, Event, WindowEvent},
+    event::{Event, WindowEvent},
     pixels::PixelFormatEnum,
     rect::Rect,
     render::Canvas,
@@ -462,18 +461,49 @@ impl Client {
     async fn handle_message(&mut self, buf: &Bytes) -> Result<bool> {
         if let Ok(frame) = Frame::decode(&buf[..]) {
             self.render_frame(frame)?;
+            Ok(true)
         } else if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
-            if status_update.kind == StatusType::Exit as i32 {
-                log::trace!("Server gracefully disconnected!");
-                return Ok(false);
-            } else {
-                log::trace!("StatusUpdate: {:?}", status_update);
-            }
+            self.handle_status_update(status_update).await
         } else {
             log::error!("Failed to decode message: {:?}", &buf[..]);
             return Err(anyhow!("Failed to decode message"));
         }
-        Ok(true)
+    }
+
+    async fn handle_status_update(&mut self, status_update: StatusUpdate) -> Result<bool> {
+        match status_update.kind.try_into()? {
+            StatusType::Exit => {
+                log::trace!("Server gracefully disconnected!");
+                Ok(false)
+            }
+            StatusType::Info => {
+                let details = status_update.details.ok_or(anyhow!("Missing details"))?;
+                let Details::Info(info) = details else {
+                    log::warn!("Received unexpected status update message, skipping.");
+                    return Ok(true);
+                };
+                log::info!("Server info: {}", info.message);
+                Ok(true)
+            }
+            StatusType::Warning => {
+                let details = status_update.details.ok_or(anyhow!("Missing details"))?;
+                let Details::Warning(warning) = details else {
+                    log::warn!("Received unexpected status update message, skipping.");
+                    return Ok(true);
+                };
+                log::warn!("Server warning: {}", warning.message);
+                Ok(true)
+            }
+            StatusType::Error => {
+                let details = status_update.details.ok_or(anyhow!("Missing details"))?;
+                let Details::Error(error) = details else {
+                    log::warn!("Received unexpected status update message, skipping.");
+                    return Ok(true);
+                };
+                log::error!("Server error: {}", error.message);
+                Ok(true)
+            }
+        }
     }
 
     fn render_frame(&mut self, frame: Frame) -> Result<()> {

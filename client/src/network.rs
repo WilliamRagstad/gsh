@@ -2,12 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use libgsh::shared::{
-    protocol::{
-        self,
-        client_hello::MonitorInfo,
-        status_update::{Details, Exit, StatusType},
-        ServerHelloAck,
-    },
+    protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
 };
 use tokio::{io::AsyncWriteExt, net::TcpStream};
@@ -29,7 +24,7 @@ pub async fn shutdown_tls(messages: &mut Messages) -> Result<()> {
     messages
         .write_message(protocol::StatusUpdate {
             kind: StatusType::Exit as i32,
-            details: Some(Details::Exit(Exit {})),
+            details: None,
         })
         .await?;
     messages.get_stream().get_mut().0.shutdown().await?;

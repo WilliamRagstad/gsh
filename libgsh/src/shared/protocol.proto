@@ -36,38 +36,35 @@ message ServerHelloAck {
 		RGBA = 1;
 	}
 	FrameFormat format = 1;
+	// Window settings message, used to configure the window properties for the client.
+	message WindowSettings {
+		enum WindowMode {
+			FULLSCREEN = 0;
+			BORDERLESS = 1;
+			WINDOWED = 2;
+			WINDOWED_MAXIMIZED = 3;
+		}
+		uint32 window_id = 1;       // Unique identifier for the window
+		optional uint32 monitor_id = 2; // Monitor ID for the window
+		WindowMode initial_mode = 3; // Window mode (fullscreen, windowed, borderless)
+		uint32 width = 4;    // Width of the window in pixels
+		uint32 height = 5;   // Height of the window in pixels
+		string title = 6;    // Title of the window
+		bool always_on_top = 7; // Whether the window is always on top
+		bool allow_resize = 8; // Whether the window can be resized
+		// If allow_resize = true, this flag determines
+		// whether frame images should be resized to fit the window
+		// when the window is resized or stay fixed to the original frame size.
+		bool resize_frame = 9;
+		// Determines how the frame image is anchored in the window
+		enum WindowAnchor {
+			TOP_LEFT = 0;
+			CENTER = 1;
+		}
+		WindowAnchor frame_anchor = 10; // Anchor position of the frame image in the window
+	}
 	// List of initial window settings for the client
 	repeated WindowSettings windows = 2;
-}
-
-
-// Window settings message, used to configure the window properties for the client.
-// Server -> Client
-message WindowSettings {
-	enum WindowMode {
-		FULLSCREEN = 0;
-		BORDERLESS = 1;
-		WINDOWED = 2;
-		WINDOWED_MAXIMIZED = 3;
-	}
-	uint32 window_id = 1;       // Unique identifier for the window
-	optional uint32 monitor_id = 2; // Monitor ID for the window
-	WindowMode initial_mode = 3; // Window mode (fullscreen, windowed, borderless)
-	uint32 width = 4;    // Width of the window in pixels
-	uint32 height = 5;   // Height of the window in pixels
-	string title = 6;    // Title of the window
-	bool always_on_top = 7; // Whether the window is always on top
-	bool allow_resize = 8; // Whether the window can be resized
-	// If allow_resize = true, this flag determines
-	// whether frame images should be resized to fit the window
-	// when the window is resized or stay fixed to the original frame size.
-	bool resize_frame = 9;
-	// Determines how the frame image is anchored in the window
-	enum WindowAnchor {
-		TOP_LEFT = 0;
-		CENTER = 1;
-	}
-	WindowAnchor frame_anchor = 10; // Anchor position of the frame image in the window
 }
 
 // Message representing a frame of image data
@@ -92,18 +89,9 @@ message Frame {
 // Client -> Server
 message UserInput {
 	enum InputType {
-		// Different types of basic input events
-		START = 0;
-		STOP = 1;
-		PAUSE = 2;
-		RESUME = 3;
-		RESET = 4;
-		BACK = 5;
-		FORWARD = 6;
-		// Input types for different events
-		KEY_EVENT = 7;
-		MOUSE_EVENT = 8;
-		WINDOW_EVENT = 9;
+		KEY_EVENT = 0;
+		MOUSE_EVENT = 1;
+		WINDOW_EVENT = 2;
 	}
 	InputType kind = 1;   // Type of input event
 	uint32 window_id = 2; // Unique identifier for the window
@@ -183,7 +171,6 @@ message StatusUpdate {
 		Info info = 3;
 		Warning warning = 4;
 		Error error = 5;
-		Exit exit = 6;
 	}
 
 	// Nested message for informational updates
@@ -202,7 +189,4 @@ message StatusUpdate {
 		string message = 1; // Error message
 		int32 code = 2;     // Error code
 	}
-
-	// Nested message for exit updates
-	message Exit {	}
 }

@@ -4,9 +4,7 @@ use clap::Parser;
 use client::Client;
 use libgsh::shared::protocol::{
     client_hello::MonitorInfo,
-    server_hello_ack::FrameFormat,
-    window_settings::{self, WindowMode},
-    WindowSettings,
+    server_hello_ack::{window_settings, window_settings::WindowMode, FrameFormat, WindowSettings},
 };
 
 mod client;
