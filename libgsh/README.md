@@ -34,7 +34,31 @@ The `libgsh` library is designed to be modular and extensible, allowing develope
 <div align="center">
   <img src="../assets/graph.png" alt="Architecture Diagram">
   <br>
-  <strong>Network architecture diagram</strong>
+  <strong>Overview diagram</strong>
+  <br>
+  <br>
+
+```mermaid
+sequenceDiagram
+	participant Client as gsh client
+	participant CGSH as gsh library <br> (vX.X.X)
+	participant SGSH as gsh library <br> (vX.X.X)
+	participant Server as service <br> (libgsh server)
+
+	Client->>CGSH: Connect to server
+	CGSH-->>SGSH: TLS + Handshake
+	SGSH->>Server: Client Hello message
+	SGSH->>Client: Server Hello ACK message
+	par main event loop
+    rect rgb(50, 60, 210)
+		Client->>Server: User input
+		Server-->>Client: Visual/Media output
+	end
+	end
+```
+
+  <br>
+  <strong>Detailed communication diagram</strong>
 </div>
 
 ## Prerequisites
