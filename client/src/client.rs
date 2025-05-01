@@ -1,25 +1,29 @@
 use anyhow::{anyhow, Result};
 use libgsh::shared::{
-    prost::Message,
+    prost::{bytes::Bytes, Message},
     protocol::{
         self,
         server_hello_ack::FrameFormat,
+        status_update::StatusType,
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
             InputType,
         },
         window_settings::WindowMode,
-        Frame, UserInput, WindowSettings,
+        Frame, StatusUpdate, UserInput, WindowSettings,
     },
 };
 use sdl2::{
-    event::{Event, WindowEvent},
+    event::{DisplayEvent, Event, WindowEvent},
     pixels::PixelFormatEnum,
     rect::Rect,
     render::Canvas,
     video,
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use crate::network::Messages;
 
@@ -253,25 +257,162 @@ impl Client {
         Ok(())
     }
 
+    async fn handle_event(&mut self, event: Event) -> Result<bool> {
+        match event {
+            Event::Quit { .. } => {
+                log::trace!("Received quit event, exiting...");
+                return Ok(false);
+            }
+            Event::Window {
+                win_event: WindowEvent::Close,
+                window_id,
+                ..
+            } => {
+                self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
+                    .await?;
+                log::trace!("Window {} closed", window_id);
+                self.destroy_window(window_id).await?;
+            }
+            Event::Window {
+                win_event: WindowEvent::Resized(width, height),
+                window_id,
+                ..
+            } => {
+                self.window_event(
+                    window_id,
+                    WindowAction::Resize,
+                    0,
+                    0,
+                    width as u32,
+                    height as u32,
+                )
+                .await?;
+                log::trace!("Window {} resized to {}x{}", window_id, width, height);
+            }
+            Event::Window {
+                win_event: WindowEvent::Moved(x, y),
+                window_id,
+                ..
+            } => {
+                self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
+                    .await?;
+                log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+            }
+            Event::KeyDown {
+                keycode: Some(keycode),
+                keymod,
+                window_id,
+                ..
+            } => {
+                self.key_event(window_id, KeyAction::Press, keycode, keymod)
+                    .await?
+            }
+            Event::KeyUp {
+                keycode: Some(keycode),
+                keymod,
+                window_id,
+                ..
+            } => {
+                self.key_event(window_id, KeyAction::Release, keycode, keymod)
+                    .await?
+            }
+            Event::MouseMotion {
+                window_id, x, y, ..
+            } => {
+                self.mouse_event(window_id, MouseAction::Move, None, x, y, 0.0, 0.0)
+                    .await?;
+                log::trace!("Mouse moved in window {}: ({}, {})", window_id, x, y);
+            }
+            Event::MouseButtonDown {
+                window_id,
+                mouse_btn,
+                x,
+                y,
+                ..
+            } => {
+                self.mouse_event(
+                    window_id,
+                    MouseAction::Press,
+                    Some(mouse_btn),
+                    x,
+                    y,
+                    0.0,
+                    0.0,
+                )
+                .await?;
+                log::trace!(
+                    "Mouse button pressed in window {}: ({}, {})",
+                    window_id,
+                    x,
+                    y
+                );
+            }
+            Event::MouseButtonUp {
+                window_id,
+                mouse_btn,
+                x,
+                y,
+                ..
+            } => {
+                self.mouse_event(
+                    window_id,
+                    MouseAction::Release,
+                    Some(mouse_btn),
+                    x,
+                    y,
+                    0.0,
+                    0.0,
+                )
+                .await?;
+                log::trace!(
+                    "Mouse button released in window {}: ({}, {})",
+                    window_id,
+                    x,
+                    y
+                );
+            }
+            Event::MouseWheel {
+                window_id,
+                direction: _direction,
+                precise_x,
+                precise_y,
+                mouse_x,
+                mouse_y,
+                ..
+            } => {
+                self.mouse_event(
+                    window_id,
+                    MouseAction::Scroll,
+                    None,
+                    mouse_x,
+                    mouse_y,
+                    precise_x,
+                    precise_y,
+                )
+                .await?;
+                log::trace!(
+                    "Mouse wheel scrolled in window {}: ({}, {})",
+                    window_id,
+                    mouse_x,
+                    mouse_y,
+                );
+            }
+            _ => {
+                log::trace!("Unhandled event: {:?}", event);
+            }
+        }
+        Ok(true)
+    }
+
     pub async fn main(&mut self) -> Result<()> {
         let mut event_pump = self.sdl.event_pump().map_err(|e| anyhow!(e))?;
-        let mut last_frame_time = std::time::Instant::now();
+        let mut last_frame_time = Instant::now();
         'running: loop {
             // Read messages from the server
             match self.messages.read_message().await {
                 Ok(buf) => {
-                    if let Ok(frame) = protocol::Frame::decode(&buf[..]) {
-                        self.render_frame(frame)?;
-                    } else if let Ok(status_update) = protocol::StatusUpdate::decode(&buf[..]) {
-                        if status_update.kind == protocol::status_update::StatusType::Exit as i32 {
-                            log::trace!("Server gracefully disconnected!");
-                            break 'running;
-                        } else {
-                            log::trace!("StatusUpdate: {:?}", status_update);
-                        }
-                    } else {
-                        log::error!("Failed to decode message: {:?}", &buf[..]);
-                        return Err(anyhow!("Failed to decode message"));
+                    if !self.handle_message(&buf).await? {
+                        break 'running;
                     }
                 }
                 Err(err) => match err.kind() {
@@ -293,159 +434,46 @@ impl Client {
 
             // Events from SDL2 windows
             for event in event_pump.poll_iter() {
-                match event {
-                    Event::Quit { .. } => {
-                        log::trace!("Received quit event, exiting...");
-                        break 'running;
-                    }
-                    Event::Window {
-                        win_event: WindowEvent::Close,
-                        window_id,
-                        ..
-                    } => {
-                        self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
-                            .await?;
-                        log::trace!("Window {} closed", window_id);
-                        self.destroy_window(window_id).await?;
-                    }
-                    Event::Window {
-                        win_event: WindowEvent::Resized(width, height),
-                        window_id,
-                        ..
-                    } => {
-                        self.window_event(
-                            window_id,
-                            WindowAction::Resize,
-                            0,
-                            0,
-                            width as u32,
-                            height as u32,
-                        )
-                        .await?;
-                        log::trace!("Window {} resized to {}x{}", window_id, width, height);
-                    }
-                    Event::Window {
-                        win_event: WindowEvent::Moved(x, y),
-                        window_id,
-                        ..
-                    } => {
-                        self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
-                            .await?;
-                        log::trace!("Window {} moved to ({}, {})", window_id, x, y);
-                    }
-                    Event::KeyDown {
-                        keycode: Some(keycode),
-                        keymod,
-                        window_id,
-                        ..
-                    } => {
-                        self.key_event(window_id, KeyAction::Press, keycode, keymod)
-                            .await?
-                    }
-                    Event::MouseMotion {
-                        window_id, x, y, ..
-                    } => {
-                        self.mouse_event(window_id, MouseAction::Move, None, x, y, 0.0, 0.0)
-                            .await?;
-                        log::trace!("Mouse moved in window {}: ({}, {})", window_id, x, y);
-                    }
-                    Event::MouseButtonDown {
-                        window_id,
-                        mouse_btn,
-                        x,
-                        y,
-                        ..
-                    } => {
-                        self.mouse_event(
-                            window_id,
-                            MouseAction::Press,
-                            Some(mouse_btn),
-                            x,
-                            y,
-                            0.0,
-                            0.0,
-                        )
-                        .await?;
-                        log::trace!(
-                            "Mouse button pressed in window {}: ({}, {})",
-                            window_id,
-                            x,
-                            y
-                        );
-                    }
-                    Event::MouseButtonUp {
-                        window_id,
-                        mouse_btn,
-                        x,
-                        y,
-                        ..
-                    } => {
-                        self.mouse_event(
-                            window_id,
-                            MouseAction::Release,
-                            Some(mouse_btn),
-                            x,
-                            y,
-                            0.0,
-                            0.0,
-                        )
-                        .await?;
-                        log::trace!(
-                            "Mouse button released in window {}: ({}, {})",
-                            window_id,
-                            x,
-                            y
-                        );
-                    }
-                    Event::MouseWheel {
-                        window_id,
-                        direction: _direction,
-                        precise_x,
-                        precise_y,
-                        mouse_x,
-                        mouse_y,
-                        ..
-                    } => {
-                        self.mouse_event(
-                            window_id,
-                            MouseAction::Scroll,
-                            None,
-                            mouse_x,
-                            mouse_y,
-                            precise_x,
-                            precise_y,
-                        )
-                        .await?;
-                        log::trace!(
-                            "Mouse wheel scrolled in window {}: ({}, {})",
-                            window_id,
-                            mouse_x,
-                            mouse_y,
-                        );
-                    }
-                    _ => {
-                        log::trace!("Unhandled event: {:?}", event);
-                    }
+                if !self.handle_event(event).await? {
+                    break 'running;
                 }
             }
 
             // Sleep to maintain frame rate
             let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
             if elapsed_time < FRAME_TIME {
-                std::thread::sleep(std::time::Duration::new(
-                    0,
-                    (FRAME_TIME - elapsed_time) as u32,
-                ));
+                tokio::time::sleep(Duration::from_nanos(FRAME_TIME - elapsed_time)).await;
+            } else {
+                log::trace!(
+                    "Frame time exceeded: {} ns (max: {} ns)",
+                    elapsed_time,
+                    FRAME_TIME
+                );
             }
-            last_frame_time = std::time::Instant::now();
+            last_frame_time = Instant::now();
         }
         log::trace!("Exiting main loop...");
-        // Destroy all windows (Hacky way to ensure all windows are closed)
-        let keys = self.windows.keys().cloned().collect::<Vec<_>>();
-        for window_id in keys {
+        for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
             self.destroy_window(window_id).await?;
         }
         Ok(())
+    }
+
+    async fn handle_message(&mut self, buf: &Bytes) -> Result<bool> {
+        if let Ok(frame) = Frame::decode(&buf[..]) {
+            self.render_frame(frame)?;
+        } else if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
+            if status_update.kind == StatusType::Exit as i32 {
+                log::trace!("Server gracefully disconnected!");
+                return Ok(false);
+            } else {
+                log::trace!("StatusUpdate: {:?}", status_update);
+            }
+        } else {
+            log::error!("Failed to decode message: {:?}", &buf[..]);
+            return Err(anyhow!("Failed to decode message"));
+        }
+        Ok(true)
     }
 
     fn render_frame(&mut self, frame: Frame) -> Result<()> {
