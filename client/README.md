@@ -1,18 +1,33 @@
-# Graphical Shell Client
+# Graphical Shell Client&nbsp; <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
 
 This is the client application for **gsh**.
 It provides a cross-platform native window to interface with graphical server applications in a seamless and intuitive manner.
+The client application is a cross-platform native window that interfaces with graphical server applications in a seamless and intuitive manner.
 
-## Build from Source
+&nbsp;
 
-To build the **gsh client** from source, install the [required dependencies](#contributing) then run:
+## Quick Install
 
-```bash
-git clone https://github.com/WilliamRagstad/gsh && cd gsh/client
-cargo build --release
-```
+Quickly install the latest release using the one-liners below.
+You can also find the latest release binaries on the [releases page](https://github.com/WilliamRagstad/gsh/releases) or [build from source](#build-from-source).
 
-The compiled binary will be located in `target/release/gsh` and can be moved to a directory in your PATH for easier access.
+> ### Windows
+>
+> Run as administrator in `PowerShell`:
+>
+> ```powershell
+> iwr https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.ps1 | iex
+> ```
+
+---
+
+> ### Linux
+>
+> ```bash
+> curl -sSfL https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.sh | sh
+> ```
+
+&nbsp;
 
 ## Usage
 
@@ -38,6 +53,19 @@ See all available options by running:
 ```bash
 gsh --help
 ```
+
+&nbsp;
+
+## Build from Source
+
+To build the **gsh client** from source, install the [required dependencies](#contributing) then run:
+
+```bash
+git clone https://github.com/WilliamRagstad/gsh && cd gsh/client
+cargo build --release
+```
+
+The compiled binary will be located in `./target/release/gsh` and can be moved to a directory in your PATH for easier access.
 
 ## Contributing
 

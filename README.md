@@ -22,29 +22,16 @@ Whether you're building a personal server, a graphical Bulletin Board System (BB
 It shippes with a SSH-like client application (`gsh`) that allows users to connect to a server and interact with it through a graphical interface.
 All rendering and graphical elements are handled by the server, while the client seamlessly streams user interactions and input to the server for processing.
 
-> ---
-> ### [Client Application](client/README.md)&nbsp; <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/v/release/WilliamRagstad/gsh?color=%23ff00a0&include_prereleases&label=client&sort=semver&style=flat-square" alt="Client Version"></a> <a href="https://github.com/WilliamRagstad/gsh/releases/latest"><img src="https://img.shields.io/github/downloads/WilliamRagstad/gsh/total?color=6b0&label=client dls&sort=semver&style=flat-square" alt="Client Downloads"></a>
->
-> The client application is a cross-platform native window that interfaces with graphical server applications in a seamless and intuitive manner.
-> Quickly install the latest release using the one-liners below.
->
-> ### Windows
->
-> Run as administrator in `PowerShell`:
->
-> ```powershell
-> iwr https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.ps1 | iex
-> ```
->
-> ### Linux
->
-> ```bash
-> curl -sSfL https://raw.githubusercontent.com/WilliamRagstad/gsh/main/install.sh | sh
-> ```
->
-> You can also find the latest release binaries on the [releases](https://github.com/WilliamRagstad/gsh/releases) page or build from source.
->
-> ---
+<div align="center">
+  <table>
+	<tr>
+	  <td align="center">
+	  	<h3>👉 Download <a href="client/README.md"><code>gsh</code></a> 👈</h3>
+	  	Quickly install the latest <b>client</b>!
+	  </td>
+	</tr>
+	</table>
+</div>
 
 ## Features
 
@@ -64,19 +51,4 @@ All rendering and graphical elements are handled by the server, while the client
 
 - ### [Community](COMMUNITY.md) 👪
 
-## Contributing
-
-If you want to contribute to the development of **gsh**, follow these steps:
-
-- Install [Rust](https://www.rust-lang.org/tools/install)
-- Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) version 17
-  - In the "Workloads" tab enable "Desktop development with C++"
-  - Click Modify at the bottom right
-- Install [`protoc`](https://github.com/protocolbuffers/protobuf/releases/) version 30.2 *(`shared` dependency)*
-- Install [`cmake`](https://cmake.org/download/) version 3.31.7 *(`sdl2` dependency)*
-- Clone this repository and `cd gsh`
-
-Manual system test for the `colors` example:
-
-1. In `examples/colors/`: `cargo run -q`
-2. In `client/`: `cargo run -q -- localhost --insecure`
+&nbsp;
