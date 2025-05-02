@@ -5,7 +5,12 @@ use crate::shared::{
 use prost::Message;
 use std::io::{Read, Write};
 
-use super::protocol::status_update::StatusType;
+use super::{
+    auth::{AuthProvider, AuthVerifier},
+    protocol::{
+        server_auth_ack::AuthStatus, server_hello_ack::AuthMethod, status_update::StatusType,
+    },
+};
 
 /// A codec for reading and writing length-value encoded messages.
 pub struct MessageCodec<S: Read + Write + Send> {
@@ -73,12 +78,15 @@ impl<S: Read + Write + Send> MessageCodec<S> {
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_client<S>(
+pub fn handshake_client<S, A>(
     messages: &mut MessageCodec<S>,
     monitors: Vec<MonitorInfo>,
+    mut auth_provider: A,
+    host: &str,
 ) -> std::io::Result<ServerHelloAck>
 where
     S: Read + Write + Send,
+    A: AuthProvider,
 {
     let os = match std::env::consts::OS {
         "linux" => protocol::client_hello::Os::Linux,
@@ -96,30 +104,16 @@ where
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
 
     // Send ClientAuth message if auth_method is set
-    if let Some(auth_method) = server_hello.auth_method {
-        let client_auth = match auth_method {
-            protocol::server_hello_ack::AuthMethod::PASSWORD => {
-                // Prompt for password
-                let password = "user_password".to_string(); // Replace with actual password input
-                protocol::ClientAuth {
-                    password: Some(password),
-                    signature: None,
-                }
-            }
-            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
-                // Generate or retrieve signature
-                let signature = vec![0u8; 64]; // Replace with actual signature generation
-                protocol::ClientAuth {
-                    password: None,
-                    signature: Some(signature),
-                }
-            }
-            _ => protocol::ClientAuth {
-                password: None,
-                signature: None,
-            },
-        };
-        messages.write_message(client_auth)?;
+    if server_hello.auth_method == AuthMethod::Password as i32 {
+        messages.write_message(protocol::ClientAuth {
+            password: Some(auth_provider.password(host)),
+            signature: None,
+        })?;
+    } else if server_hello.auth_method == AuthMethod::Signature as i32 {
+        messages.write_message(protocol::ClientAuth {
+            password: None,
+            signature: Some(auth_provider.signature(host)),
+        })?;
     }
 
     Ok(server_hello)
@@ -132,10 +126,12 @@ pub fn handshake_server<S>(
     messages: &mut MessageCodec<S>,
     supported_protocol_versions: &[u32],
     server_hello: ServerHelloAck,
+    auth_verifier: Option<AuthVerifier>,
 ) -> std::io::Result<ClientHello>
 where
     S: Read + Write + Send,
 {
+    let auth_method = server_hello.auth_method;
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
     if !supported_protocol_versions.contains(&client_hello.protocol_version) {
         let msg = format!(
@@ -151,28 +147,101 @@ where
     messages.write_message(server_hello)?;
 
     // Verify ClientAuth message if auth_method is set
-    if let Some(auth_method) = server_hello.auth_method {
+    if auth_method != AuthMethod::None as i32 {
         let client_auth = protocol::ClientAuth::decode(messages.read_message()?)?;
-        match auth_method {
-            protocol::server_hello_ack::AuthMethod::PASSWORD => {
-                let expected_password = "expected_password".to_string(); // Replace with actual expected password
-                if client_auth.password != Some(expected_password) {
+        let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
+        if auth_method == AuthMethod::Password as i32 {
+            let AuthVerifier::Password(password_verifier) = auth_verifier else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Password verifier is required",
+                ));
+            };
+            match client_auth.password {
+                Some(ref password) if password.is_empty() => {
+                    messages.write_message(protocol::ServerAuthAck {
+                        status: AuthStatus::Failure as i32,
+                        message: "Password is required".to_string(),
+                    })?;
                     return Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "Invalid password",
+                        std::io::ErrorKind::InvalidData,
+                        "Password is required",
                     ));
                 }
-            }
-            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
-                let expected_signature = vec![0u8; 64]; // Replace with actual expected signature
-                if client_auth.signature != Some(expected_signature) {
+                Some(ref password) => {
+                    if !password_verifier.verify_password(password) {
+                        messages.write_message(protocol::ServerAuthAck {
+                            status: AuthStatus::Failure as i32,
+                            message: "Invalid password".to_string(),
+                        })?;
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "Invalid password",
+                        ));
+                    } else {
+                        messages.write_message(protocol::ServerAuthAck {
+                            status: AuthStatus::Success as i32,
+                            message: "Password verified".to_string(),
+                        })?;
+                    }
+                }
+                None => {
+                    messages.write_message(protocol::ServerAuthAck {
+                        status: AuthStatus::Failure as i32,
+                        message: "Password is required".to_string(),
+                    })?;
                     return Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        "Invalid signature",
+                        std::io::ErrorKind::InvalidData,
+                        "Password is required",
                     ));
                 }
-            }
-            _ => {}
+            };
+        } else if auth_method == AuthMethod::Signature as i32 {
+            let AuthVerifier::Signature(signature_verifier) = auth_verifier else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Signature verifier is required",
+                ));
+            };
+            match client_auth.signature {
+                Some(ref signature) if signature.is_empty() => {
+                    messages.write_message(protocol::ServerAuthAck {
+                        status: AuthStatus::Failure as i32,
+                        message: "Signature is required".to_string(),
+                    })?;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Signature is required",
+                    ));
+                }
+                Some(ref signature) => {
+                    if !signature_verifier.verify_signature(signature) {
+                        messages.write_message(protocol::ServerAuthAck {
+                            status: AuthStatus::Failure as i32,
+                            message: "Invalid signature".to_string(),
+                        })?;
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "Invalid signature",
+                        ));
+                    } else {
+                        messages.write_message(protocol::ServerAuthAck {
+                            status: AuthStatus::Success as i32,
+                            message: "Signature verified".to_string(),
+                        })?;
+                    }
+                }
+                None => {
+                    messages.write_message(protocol::ServerAuthAck {
+                        status: AuthStatus::Failure as i32,
+                        message: "Signature is required".to_string(),
+                    })?;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Signature is required",
+                    ));
+                }
+            };
         }
     }
 

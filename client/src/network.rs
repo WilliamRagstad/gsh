@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dialoguer::{Confirm, Password};
+use dialoguer::Confirm;
 use libgsh::shared::{
     protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
@@ -16,7 +16,7 @@ use tokio_rustls::rustls::{
 // use std::{net::TcpStream, sync::Arc};
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-use crate::config;
+use crate::{auth::ClientAuthProvider, config};
 
 // pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 pub type Messages = AsyncMessageCodec<TlsStream<TcpStream>>;
@@ -103,7 +103,7 @@ async fn verify_host(
             .default(false)
             .interact()?;
         if confirmation {
-            known_hosts.add_host(host.to_string(), fingerprints.clone());
+            known_hosts.add_host(host.to_string(), fingerprints.clone(), None, None);
             log::info!("Host {} added to known hosts.", host);
             Ok(true)
         } else {
@@ -136,49 +136,13 @@ pub async fn connect_tls(
         }
     }
     let mut messages = Messages::new(tls_stream);
-    let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
-
-    // Send ClientAuth message if auth_method is set
-    if let Some(auth_method) = hello.auth_method {
-        let client_auth = match auth_method {
-            protocol::server_hello_ack::AuthMethod::PASSWORD => {
-                // Retrieve stored password if available
-                let password = known_hosts
-                    .find_host(host)
-                    .and_then(|known_host| known_host.password.clone())
-                    .unwrap_or_else(|| {
-                        // Prompt for password if not stored
-                        Password::new()
-                            .with_prompt("Enter password")
-                            .interact()
-                            .unwrap()
-                    });
-                protocol::ClientAuth {
-                    password: Some(password),
-                    signature: None,
-                }
-            }
-            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
-                // Retrieve stored signature if available
-                let signature = known_hosts
-                    .find_host(host)
-                    .and_then(|known_host| known_host.signature.clone())
-                    .unwrap_or_else(|| {
-                        // Generate or retrieve signature if not stored
-                        vec![0u8; 64] // Replace with actual signature generation
-                    });
-                protocol::ClientAuth {
-                    password: None,
-                    signature: Some(signature),
-                }
-            }
-            _ => protocol::ClientAuth {
-                password: None,
-                signature: None,
-            },
-        };
-        messages.write_message(client_auth).await?;
-    }
+    let hello = libgsh::shared::r#async::handshake_client(
+        &mut messages,
+        monitors,
+        ClientAuthProvider::default(),
+        host,
+    )
+    .await?;
 
     Ok((hello, messages))
 }

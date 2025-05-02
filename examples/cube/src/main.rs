@@ -10,7 +10,7 @@ use libgsh::{
     },
     shared::{
         protocol::{
-            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+            server_hello_ack::{window_settings, AuthMethod, FrameFormat, WindowSettings},
             user_input::{window_event::WindowAction, InputEvent},
             Frame, ServerHelloAck,
         },
@@ -217,6 +217,7 @@ impl AsyncService for CubeService {
                 resize_frame: true,
                 frame_anchor: window_settings::WindowAnchor::Center.into(),
             }],
+            auth_method: AuthMethod::None.into(),
         }
     }
 }

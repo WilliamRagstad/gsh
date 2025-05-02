@@ -1,7 +1,12 @@
-use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
+use std::{collections::HashMap, io::Read};
 
 use homedir::my_home;
+use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use rsa::rand_core::OsRng;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 
 fn gsh_dir() -> PathBuf {
@@ -15,9 +20,10 @@ fn gsh_dir() -> PathBuf {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHost {
-    host: String,               // Hostname or IP address
-    fingerprints: Vec<Vec<u8>>, // Fingerprint of the host's public key
+    host: String,                // Hostname or IP address
+    fingerprints: Vec<Vec<u8>>,  // Fingerprint of the host's public key
     id_file_ref: Option<String>, // Reference to an ID file in IdFiles
+    password: Option<String>,    // Password for the host (if any)
 }
 
 impl KnownHost {
@@ -30,6 +36,22 @@ impl KnownHost {
 
     pub fn fingerprints(&self) -> &[Vec<u8>] {
         &self.fingerprints
+    }
+
+    pub fn password(&self) -> Option<String> {
+        self.password.clone()
+    }
+
+    pub fn set_password(&mut self, password: String) {
+        self.password = Some(password);
+    }
+
+    pub fn id_file_ref(&self) -> Option<&String> {
+        self.id_file_ref.as_ref()
+    }
+
+    pub fn set_id_file_ref(&mut self, id_file_ref: String) {
+        self.id_file_ref = Some(id_file_ref);
     }
 }
 
@@ -62,14 +84,29 @@ impl KnownHosts {
     }
 
     /// Add a new host to the list of known hosts
-    pub fn add_host(&mut self, host: String, fingerprints: Vec<Vec<u8>>, id_file_ref: Option<String>) {
-        self.hosts.push(KnownHost { host, fingerprints, id_file_ref });
+    pub fn add_host(
+        &mut self,
+        host: String,
+        fingerprints: Vec<Vec<u8>>,
+        id_file_ref: Option<String>,
+        password: Option<String>,
+    ) {
+        self.hosts.push(KnownHost {
+            host,
+            fingerprints,
+            id_file_ref,
+            password,
+        });
         self.save();
     }
 
     /// Find a host in the list of known hosts
     pub fn find_host(&self, host: &str) -> Option<&KnownHost> {
         self.hosts.iter().find(|h| h.host == host)
+    }
+
+    pub fn find_host_mut(&mut self, host: &str) -> Option<&mut KnownHost> {
+        self.hosts.iter_mut().find(|h| h.host == host)
     }
 }
 
@@ -101,14 +138,59 @@ impl IdFiles {
         serde_json::to_writer_pretty(writer, self).expect("Failed to save id_files.json file");
     }
 
+    pub fn names(&self) -> Vec<String> {
+        self.id_files.keys().cloned().collect()
+    }
+
     /// Add a new ID file to the list of ID files
-    pub fn add_id_file(&mut self, name: String, path: PathBuf) {
-        self.id_files.insert(name, path);
+    pub fn add_id_file(&mut self, name: &str, path: PathBuf) {
+        self.id_files.insert(name.to_string(), path);
         self.save();
     }
 
     /// Find an ID file in the list of ID files
     pub fn find_id_file(&self, name: &str) -> Option<&PathBuf> {
         self.id_files.get(name)
+    }
+
+    pub fn read_id_file(&self, name: &str) -> Option<Vec<u8>> {
+        if let Some(path) = self.find_id_file(name) {
+            let file = std::fs::File::open(path).expect("Failed to open ID file");
+            let mut reader = std::io::BufReader::new(file);
+            let mut signature = Vec::new();
+            reader
+                .read_to_end(&mut signature)
+                .expect("Failed to read ID file");
+            Some(signature)
+        } else {
+            log::warn!("ID file {} not found.", name);
+            None
+        }
+    }
+
+    pub fn create_id_file(&mut self, name: &str) -> PathBuf {
+        let mut rng = OsRng;
+        let bits = 2048; // Key size in bits
+        let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate a key");
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let private_key_pem = private_key
+            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+        let public_key_pem = public_key
+            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("Failed to encode public key");
+
+        let mut path = gsh_dir();
+        path.push(format!("{}_{}.pem", name, rand::random::<u32>()));
+
+        let mut file = File::create(&path).expect("Failed to create ID file");
+        file.write_all(private_key_pem.as_bytes())
+            .expect("Failed to write private key to file");
+        file.write_all(public_key_pem.as_bytes())
+            .expect("Failed to write public key to file");
+
+        self.add_id_file(name, path.clone());
+        path
     }
 }

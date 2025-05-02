@@ -1,17 +1,12 @@
-use std::process::exit;
-use std::path::PathBuf;
-use std::fs::File;
-use std::io::Write;
-
 use clap::{Parser, Subcommand};
 use client::Client;
 use libgsh::shared::protocol::{
     client_hello::MonitorInfo,
     server_hello_ack::{window_settings, window_settings::WindowMode, FrameFormat, WindowSettings},
 };
-use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePrivateKey, pkcs8::EncodePublicKey};
-use rand::rngs::OsRng;
+use std::process::exit;
 
+mod auth;
 mod client;
 mod config;
 mod network;
@@ -49,17 +44,18 @@ async fn main() {
         .init();
     let args = Args::parse();
 
+    let mut known_hosts = config::KnownHosts::load();
+    let mut id_files = config::IdFiles::load();
+
     if let Some(command) = args.command {
         match command {
             Command::CreateIdFile { name } => {
-                let mut id_files = config::IdFiles::load();
-                create_id_file(name, &mut id_files);
+                let path = id_files.create_id_file(&name);
+                println!("ID file created at {} for {}", path.display(), name);
                 return;
             }
         }
     }
-
-    let mut known_hosts = config::KnownHosts::load();
 
     // Initialize SDL2
     let sdl = sdl2::init().unwrap_or_else(|e| {
@@ -167,23 +163,4 @@ fn default_window(host: String) -> WindowSettings {
         resize_frame: false,
         frame_anchor: window_settings::WindowAnchor::TopLeft as i32,
     }
-}
-
-fn create_id_file(name: String, id_files: &mut config::IdFiles) {
-    let mut rng = OsRng;
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate a key");
-    let public_key = RsaPublicKey::from(&private_key);
-
-    let private_key_pem = private_key.to_pkcs8_pem().expect("Failed to encode private key");
-    let public_key_pem = public_key.to_public_key_pem().expect("Failed to encode public key");
-
-    let mut path = config::gsh_dir();
-    path.push(format!("{}_{}.pem", name, rand::random::<u32>()));
-
-    let mut file = File::create(&path).expect("Failed to create ID file");
-    file.write_all(private_key_pem.as_bytes()).expect("Failed to write private key to file");
-    file.write_all(public_key_pem.as_bytes()).expect("Failed to write public key to file");
-
-    id_files.add_id_file(name, path);
 }

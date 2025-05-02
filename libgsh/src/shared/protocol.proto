@@ -71,7 +71,25 @@ message ServerHelloAck {
 		PASSWORD = 1;
 		SIGNATURE = 2;
 	}
-	optional AuthMethod auth_method = 3;
+	AuthMethod auth_method = 3;
+}
+
+// Message representing client authentication data
+// Client -> Server
+message ClientAuth {
+	optional string password = 1;
+	optional bytes signature = 2;
+}
+
+// Message representing server authentication data
+// Server -> Client
+message ServerAuthAck {
+	enum AuthStatus {
+		SUCCESS = 0;
+		FAILURE = 1;
+	}
+	AuthStatus status = 1; // Authentication status (success or failure)
+	string message = 2;   // Message providing additional information about the authentication status
 }
 
 // Message representing a frame of image data
@@ -196,11 +214,4 @@ message StatusUpdate {
 		string message = 1; // Error message
 		int32 code = 2;     // Error code
 	}
-}
-
-// Message representing client authentication data
-// Client -> Server
-message ClientAuth {
-	optional string password = 1;
-	optional bytes signature = 2;
 }

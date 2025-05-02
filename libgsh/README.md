@@ -50,6 +50,14 @@ sequenceDiagram
 	CGSH-->>SGSH: TLS + Handshake
 	SGSH->>Server: Client Hello message
 	SGSH->>Client: Server Hello ACK message
+	alt Server require Authentication
+	rect rgb(190, 30, 50)
+		Client->>Client: Enter credentials
+		Client->>SGSH: Send credentials
+		SGSH->>SGSH: Verify credentials
+		SGSH->>CGSH: Authentication result
+	end
+	end
 	par main event loop
     rect rgb(50, 60, 210)
 		Client->>Server: User input

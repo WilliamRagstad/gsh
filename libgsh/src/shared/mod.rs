@@ -1,4 +1,5 @@
 pub mod r#async;
+pub mod auth;
 pub mod sync;
 
 pub use prost;
