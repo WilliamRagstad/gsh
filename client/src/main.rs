@@ -1,11 +1,16 @@
 use std::process::exit;
+use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use client::Client;
 use libgsh::shared::protocol::{
     client_hello::MonitorInfo,
     server_hello_ack::{window_settings, window_settings::WindowMode, FrameFormat, WindowSettings},
 };
+use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePrivateKey, pkcs8::EncodePublicKey};
+use rand::rngs::OsRng;
 
 mod client;
 mod config;
@@ -16,13 +21,24 @@ mod network;
 struct Args {
     /// The host to connect to.
     #[clap(value_parser)]
-    host: String,
+    host: Option<String>,
     /// The port to connect to.
     #[clap(short, long, default_value_t = 1122)]
     port: u16,
     /// Disable TLS server certificate verification.
     #[clap(long)]
     insecure: bool,
+    #[clap(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Create a new named ID file
+    CreateIdFile {
+        /// The name of the ID file
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -32,6 +48,16 @@ async fn main() {
         .format_timestamp(None)
         .init();
     let args = Args::parse();
+
+    if let Some(command) = args.command {
+        match command {
+            Command::CreateIdFile { name } => {
+                let mut id_files = config::IdFiles::load();
+                create_id_file(name, &mut id_files);
+                return;
+            }
+        }
+    }
 
     let mut known_hosts = config::KnownHosts::load();
 
@@ -45,9 +71,14 @@ async fn main() {
         exit(1);
     });
 
-    println!("Connecting to {}:{}...", args.host, args.port);
+    let host = args.host.unwrap_or_else(|| {
+        log::error!("Host is required unless creating an ID file.");
+        exit(1);
+    });
+
+    println!("Connecting to {}:{}...", host, args.port);
     let (hello, messages) = network::connect_tls(
-        &args.host,
+        &host,
         args.port,
         args.insecure,
         monitor_info(&video),
@@ -75,7 +106,7 @@ async fn main() {
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
         client
-            .create_window(&default_window(args.host))
+            .create_window(&default_window(host))
             .unwrap_or_else(|e| {
                 log::error!("Failed to create default window: {}", e);
                 exit(1);
@@ -136,4 +167,23 @@ fn default_window(host: String) -> WindowSettings {
         resize_frame: false,
         frame_anchor: window_settings::WindowAnchor::TopLeft as i32,
     }
+}
+
+fn create_id_file(name: String, id_files: &mut config::IdFiles) {
+    let mut rng = OsRng;
+    let bits = 2048;
+    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate a key");
+    let public_key = RsaPublicKey::from(&private_key);
+
+    let private_key_pem = private_key.to_pkcs8_pem().expect("Failed to encode private key");
+    let public_key_pem = public_key.to_public_key_pem().expect("Failed to encode public key");
+
+    let mut path = config::gsh_dir();
+    path.push(format!("{}_{}.pem", name, rand::random::<u32>()));
+
+    let mut file = File::create(&path).expect("Failed to create ID file");
+    file.write_all(private_key_pem.as_bytes()).expect("Failed to write private key to file");
+    file.write_all(public_key_pem.as_bytes()).expect("Failed to write public key to file");
+
+    id_files.add_id_file(name, path);
 }
