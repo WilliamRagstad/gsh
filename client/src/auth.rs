@@ -1,7 +1,9 @@
-use dialoguer::{Confirm, Password};
-use libgsh::shared::auth::AuthProvider;
-
 use crate::config::{IdFiles, KnownHosts};
+use dialoguer::{Confirm, Password};
+use libgsh::{
+    rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey},
+    shared::auth::AuthProvider,
+};
 
 pub struct ClientAuthProvider {
     known_hosts: KnownHosts,
@@ -50,11 +52,11 @@ impl AuthProvider for ClientAuthProvider {
         password
     }
 
-    fn signature(&mut self, host: &str) -> Vec<u8> {
+    fn signature(&mut self, host: &str) -> Option<RsaPublicKey> {
         // Check if an ID file is provided as an override
         if let Some(id_override) = &self.id_override {
-            if let Some(id_file) = self.id_files.read_id_file(id_override) {
-                return id_file;
+            if let Some(pem) = self.id_files.read_id_file(id_override) {
+                return extract_public_key(pem);
             } else {
                 log::warn!("ID file {} not found.", id_override);
             }
@@ -63,8 +65,8 @@ impl AuthProvider for ClientAuthProvider {
         if let Some(known_host) = self.known_hosts.find_host(host) {
             if let Some(id) = known_host.id_file_ref() {
                 // Lookup signature in ID file
-                if let Some(id_file) = self.id_files.read_id_file(id) {
-                    return id_file;
+                if let Some(pem) = self.id_files.read_id_file(id) {
+                    return extract_public_key(pem);
                 } else {
                     log::warn!("ID file {} not found.", id);
                 }
@@ -74,7 +76,7 @@ impl AuthProvider for ClientAuthProvider {
         let id_file_names = self.id_files.names();
         if id_file_names.is_empty() {
             log::error!("No ID files found. Please create one first.");
-            return vec![];
+            return None;
         }
         let selected_id_file = dialoguer::Select::new()
             .with_prompt("Select an ID file")
@@ -104,6 +106,30 @@ impl AuthProvider for ClientAuthProvider {
             }
             self.known_hosts.save();
         }
-        signature
+        extract_public_key(signature)
+    }
+}
+
+/// Extract the public key from the signature
+fn extract_public_key(pem: Vec<u8>) -> Option<RsaPublicKey> {
+    let pem = String::from_utf8_lossy(&pem);
+
+    const PEM_PUBLIC_KEY_HEADER: &str = "-----BEGIN RSA PUBLIC KEY-----";
+    const PEM_PUBLIC_KEY_FOOTER: &str = "-----END RSA PUBLIC KEY-----";
+
+    if !pem.contains(PEM_PUBLIC_KEY_HEADER) || !pem.contains(PEM_PUBLIC_KEY_FOOTER) {
+        log::error!("Invalid PEM format for RSA public key.");
+        return None;
+    }
+
+    match RsaPublicKey::from_pkcs1_pem(
+        &pem[pem.find(PEM_PUBLIC_KEY_HEADER).unwrap()
+            ..(pem.find(PEM_PUBLIC_KEY_FOOTER).unwrap() + PEM_PUBLIC_KEY_FOOTER.len())],
+    ) {
+        Ok(public_key) => Some(public_key),
+        Err(err) => {
+            log::error!("Failed to parse PEM public key: {}", err);
+            None
+        }
     }
 }

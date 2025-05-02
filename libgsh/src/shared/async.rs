@@ -3,6 +3,7 @@ use crate::shared::{
     LengthType, LENGTH_SIZE, PROTOCOL_VERSION,
 };
 use prost::Message;
+use rsa::pkcs1::EncodeRsaPublicKey;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 
@@ -118,10 +119,15 @@ where
             })
             .await?;
     } else if server_hello.auth_method == AuthMethod::Signature as i32 {
+        let pub_key: rsa::RsaPublicKey = auth_provider
+            .signature(host)
+            .ok_or(HandshakeError::SignatureRequired)?;
+        let pem = pub_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let pem_bytes = pem.as_bytes().to_vec();
         messages
             .write_message(protocol::ClientAuth {
                 password: None,
-                signature: Some(auth_provider.signature(host)),
+                signature: Some(pem_bytes),
             })
             .await?;
     }

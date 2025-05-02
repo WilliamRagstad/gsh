@@ -1,8 +1,15 @@
+use auth::ClientAuthProvider;
 use clap::{Parser, Subcommand};
 use client::Client;
-use libgsh::shared::protocol::{
-    client_hello::MonitorInfo,
-    server_hello_ack::{window_settings, window_settings::WindowMode, FrameFormat, WindowSettings},
+use libgsh::shared::{
+    auth::AuthProvider,
+    protocol::{
+        client_hello::MonitorInfo,
+        server_hello_ack::{
+            window_settings::{self, WindowMode},
+            FrameFormat, WindowSettings,
+        },
+    },
 };
 use std::process::exit;
 
@@ -42,6 +49,11 @@ enum Command {
     ListHosts,
     /// List all IDs
     ListIds,
+    /// Verify the ID files
+    VerifyId {
+        /// The name of the ID file
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -71,6 +83,18 @@ async fn main() {
                 println!("ID files:");
                 for (id_name, id_file) in id_files.files() {
                     println!("- {}: {}", id_name, id_file.display());
+                }
+            }
+            Command::VerifyId { name } => {
+                let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
+                match provider.signature("") {
+                    Some(pub_key) => {
+                        log::trace!("Public key: {:?}", pub_key);
+                        println!("Verified public key!");
+                    }
+                    None => {
+                        println!("Invalid ID file or no public key found.");
+                    }
                 }
             }
         }

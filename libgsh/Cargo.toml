@@ -16,6 +16,7 @@ documentation = "https://docs.rs/libgsh/"
 keywords = ["graphics", "shell", "network", "gui", "server"]
 
 [dependencies]
+rsa = "0.9.8"
 rcgen = "0.13.2"
 log = "0.4.27"
 thiserror = "2.0.12"

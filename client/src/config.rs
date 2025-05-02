@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::{collections::HashMap, io::Read};
 
 use homedir::my_home;
-use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
-use rsa::rand_core::OsRng;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use libgsh::rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use libgsh::rsa::rand_core::OsRng;
+use libgsh::rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 
 fn gsh_dir() -> PathBuf {
@@ -170,10 +170,10 @@ impl IdFiles {
         let public_key = RsaPublicKey::from(&private_key);
 
         let private_key_pem = private_key
-            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .to_pkcs1_pem(libgsh::rsa::pkcs8::LineEnding::LF)
             .expect("Failed to encode private key");
         let public_key_pem = public_key
-            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .to_pkcs1_pem(libgsh::rsa::pkcs8::LineEnding::LF)
             .expect("Failed to encode public key");
 
         let mut path = gsh_dir();
