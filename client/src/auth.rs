@@ -3,17 +3,27 @@ use libgsh::shared::auth::AuthProvider;
 
 use crate::config::{IdFiles, KnownHosts};
 
-#[derive(Default)]
 pub struct ClientAuthProvider {
     known_hosts: KnownHosts,
     id_files: IdFiles,
+    id_override: Option<String>,
+}
+
+impl ClientAuthProvider {
+    pub fn new(known_hosts: KnownHosts, id_files: IdFiles, id_override: Option<String>) -> Self {
+        Self {
+            known_hosts,
+            id_files,
+            id_override,
+        }
+    }
 }
 
 impl AuthProvider for ClientAuthProvider {
     fn password(&mut self, host: &str) -> String {
         if let Some(known_host) = self.known_hosts.find_host(host) {
-            if let Some(password) = known_host.password() {
-                return password;
+            if let Some(password) = &known_host.password {
+                return password.clone();
             }
         }
         // Prompt for password if not stored
@@ -29,7 +39,7 @@ impl AuthProvider for ClientAuthProvider {
             .unwrap();
         if confirmation {
             if let Some(known_host) = self.known_hosts.find_host_mut(host) {
-                known_host.set_password(password.clone());
+                known_host.password = Some(password.clone());
             } else {
                 // Add new host if it doesn't exist
                 self.known_hosts
@@ -41,6 +51,15 @@ impl AuthProvider for ClientAuthProvider {
     }
 
     fn signature(&mut self, host: &str) -> Vec<u8> {
+        // Check if an ID file is provided as an override
+        if let Some(id_override) = &self.id_override {
+            if let Some(id_file) = self.id_files.read_id_file(id_override) {
+                return id_file;
+            } else {
+                log::warn!("ID file {} not found.", id_override);
+            }
+        }
+        // Check if the host is already known and has a signature stored
         if let Some(known_host) = self.known_hosts.find_host(host) {
             if let Some(id) = known_host.id_file_ref() {
                 // Lookup signature in ID file
@@ -53,6 +72,10 @@ impl AuthProvider for ClientAuthProvider {
         }
         // Select a signature file from the list of ID files
         let id_file_names = self.id_files.names();
+        if id_file_names.is_empty() {
+            log::error!("No ID files found. Please create one first.");
+            return vec![];
+        }
         let selected_id_file = dialoguer::Select::new()
             .with_prompt("Select an ID file")
             .default(0)
@@ -84,45 +107,3 @@ impl AuthProvider for ClientAuthProvider {
         signature
     }
 }
-
-// // Send ClientAuth message if auth_method is set
-// if let Some(auth_method) = hello.auth_method {
-// 	let client_auth = match auth_method {
-// 		protocol::server_hello_ack::AuthMethod::PASSWORD => {
-// 			// Retrieve stored password if available
-// 			let password = known_hosts
-// 				.find_host(host)
-// 				.and_then(|known_host| known_host.password.clone())
-// 				.unwrap_or_else(|| {
-// 					// Prompt for password if not stored
-// 					Password::new()
-// 						.with_prompt("Enter password")
-// 						.interact()
-// 						.unwrap()
-// 				});
-// 			protocol::ClientAuth {
-// 				password: Some(password),
-// 				signature: None,
-// 			}
-// 		}
-// 		protocol::server_hello_ack::AuthMethod::SIGNATURE => {
-// 			// Retrieve stored signature if available
-// 			let signature = known_hosts
-// 				.find_host(host)
-// 				.and_then(|known_host| known_host.signature.clone())
-// 				.unwrap_or_else(|| {
-// 					// Generate or retrieve signature if not stored
-// 					vec![0u8; 64] // Replace with actual signature generation
-// 				});
-// 			protocol::ClientAuth {
-// 				password: None,
-// 				signature: Some(signature),
-// 			}
-// 		}
-// 		_ => protocol::ClientAuth {
-// 			password: None,
-// 			signature: None,
-// 		},
-// 	};
-// 	messages.write_message(client_auth).await?;
-// }

@@ -20,10 +20,10 @@ fn gsh_dir() -> PathBuf {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHost {
-    host: String,                // Hostname or IP address
-    fingerprints: Vec<Vec<u8>>,  // Fingerprint of the host's public key
-    id_file_ref: Option<String>, // Reference to an ID file in IdFiles
-    password: Option<String>,    // Password for the host (if any)
+    pub host: String,                // Hostname or IP address
+    pub fingerprints: Vec<Vec<u8>>,  // Fingerprint of the host's public key
+    pub id_file_ref: Option<String>, // Reference to an ID file in IdFiles
+    pub password: Option<String>,    // Password for the host (if any)
 }
 
 impl KnownHost {
@@ -32,18 +32,6 @@ impl KnownHost {
         self.fingerprints
             .iter()
             .any(|fingerprint| fingerprints.iter().any(|f| f == fingerprint))
-    }
-
-    pub fn fingerprints(&self) -> &[Vec<u8>] {
-        &self.fingerprints
-    }
-
-    pub fn password(&self) -> Option<String> {
-        self.password.clone()
-    }
-
-    pub fn set_password(&mut self, password: String) {
-        self.password = Some(password);
     }
 
     pub fn id_file_ref(&self) -> Option<&String> {
@@ -58,7 +46,7 @@ impl KnownHost {
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHosts {
-    hosts: Vec<KnownHost>, // List of known hosts
+    pub hosts: Vec<KnownHost>, // List of known hosts
 }
 
 impl KnownHosts {
@@ -140,6 +128,13 @@ impl IdFiles {
 
     pub fn names(&self) -> Vec<String> {
         self.id_files.keys().cloned().collect()
+    }
+
+    pub fn files(&self) -> Vec<(String, PathBuf)> {
+        self.id_files
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Add a new ID file to the list of ID files

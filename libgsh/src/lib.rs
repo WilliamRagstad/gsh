@@ -20,6 +20,7 @@ pub enum ServiceError {
     IoError(#[from] std::io::Error),
     RustlsError(#[from] tokio_rustls::rustls::Error),
     AnyError(#[from] Box<dyn std::error::Error + Send + Sync>),
+    HandshakeError(#[from] shared::HandshakeError),
 }
 
 impl std::fmt::Display for ServiceError {
@@ -28,6 +29,7 @@ impl std::fmt::Display for ServiceError {
             ServiceError::IoError(err) => write!(f, "IO error: {}", err),
             ServiceError::RustlsError(err) => write!(f, "Rustls error: {}", err),
             ServiceError::AnyError(err) => write!(f, "{}", err),
+            ServiceError::HandshakeError(err) => write!(f, "Handshake error: {}", err),
         }
     }
 }

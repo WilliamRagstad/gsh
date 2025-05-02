@@ -23,6 +23,10 @@ struct Args {
     /// Disable TLS server certificate verification.
     #[clap(long)]
     insecure: bool,
+    /// The name of the ID file to use for authentication.
+    #[clap(short, long)]
+    id: Option<String>,
+    /// Subcommand to execute.
     #[clap(subcommand)]
     command: Option<Command>,
 }
@@ -30,10 +34,14 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Create a new named ID file
-    CreateIdFile {
+    NewId {
         /// The name of the ID file
         name: String,
     },
+    /// List all known hosts
+    ListHosts,
+    /// List all IDs
+    ListIds,
 }
 
 #[tokio::main]
@@ -44,17 +52,29 @@ async fn main() {
         .init();
     let args = Args::parse();
 
-    let mut known_hosts = config::KnownHosts::load();
+    let known_hosts = config::KnownHosts::load();
     let mut id_files = config::IdFiles::load();
 
     if let Some(command) = args.command {
         match command {
-            Command::CreateIdFile { name } => {
+            Command::NewId { name } => {
                 let path = id_files.create_id_file(&name);
                 println!("ID file created at {} for {}", path.display(), name);
-                return;
+            }
+            Command::ListHosts => {
+                println!("Known hosts:");
+                for host in known_hosts.hosts {
+                    println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
+                }
+            }
+            Command::ListIds => {
+                println!("ID files:");
+                for (id_name, id_file) in id_files.files() {
+                    println!("- {}: {}", id_name, id_file.display());
+                }
             }
         }
+        return;
     }
 
     // Initialize SDL2
@@ -78,7 +98,9 @@ async fn main() {
         args.port,
         args.insecure,
         monitor_info(&video),
-        &mut known_hosts,
+        known_hosts,
+        id_files,
+        args.id,
     )
     .await
     .unwrap_or_else(|e| {

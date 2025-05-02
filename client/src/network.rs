@@ -79,7 +79,7 @@ async fn verify_host(
             log::warn!(
                 "Host {} fingerprint mismatch. Expected: {:X?}, Found: {:X?}",
                 host,
-                known.fingerprints(),
+                known.fingerprints,
                 fingerprints
             );
             Ok(false)
@@ -118,7 +118,9 @@ pub async fn connect_tls(
     port: u16,
     insecure: bool,
     monitors: Vec<MonitorInfo>,
-    known_hosts: &mut config::KnownHosts,
+    mut known_hosts: config::KnownHosts,
+    id_files: config::IdFiles,
+    id_override: Option<String>,
 ) -> anyhow::Result<(ServerHelloAck, Messages)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = Arc::new(tls_config(insecure)?);
@@ -128,7 +130,7 @@ pub async fn connect_tls(
     let mut tls_stream = tls_connector.connect(server_name, sock).await?;
     if !insecure {
         let certs = tls_stream.get_ref().1.peer_certificates().unwrap();
-        if !verify_host(known_hosts, host, certs).await? {
+        if !verify_host(&mut known_hosts, host, certs).await? {
             tls_stream.get_mut().1.send_close_notify();
             tls_stream.get_mut().0.shutdown().await?;
             log::warn!("Host verification failed. Connection closed.");
@@ -139,7 +141,7 @@ pub async fn connect_tls(
     let hello = libgsh::shared::r#async::handshake_client(
         &mut messages,
         monitors,
-        ClientAuthProvider::default(),
+        ClientAuthProvider::new(known_hosts, id_files, id_override),
         host,
     )
     .await?;

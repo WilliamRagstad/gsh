@@ -11,6 +11,7 @@ use super::{
     protocol::{
         server_auth_ack::AuthStatus, server_hello_ack::AuthMethod, status_update::StatusType,
     },
+    HandshakeError,
 };
 
 /// A codec for reading and writing length-value encoded messages.
@@ -86,7 +87,7 @@ pub async fn handshake_client<S, A>(
     monitors: Vec<MonitorInfo>,
     mut auth_provider: A,
     host: &str,
-) -> std::io::Result<ServerHelloAck>
+) -> Result<ServerHelloAck, HandshakeError>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin,
     A: AuthProvider,
@@ -136,7 +137,7 @@ pub async fn handshake_server<S>(
     supported_protocol_versions: &[u32],
     server_hello: ServerHelloAck,
     auth_verifier: Option<AuthVerifier>,
-) -> std::io::Result<ClientHello>
+) -> Result<ClientHello, HandshakeError>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin,
 {
@@ -153,7 +154,7 @@ where
                 details: None,
             })
             .await?;
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        return Err(HandshakeError::AnyError(msg.into()));
     }
     messages.write_message(server_hello).await?;
 
@@ -163,10 +164,7 @@ where
         let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
         if auth_method == AuthMethod::Password as i32 {
             let AuthVerifier::Password(password_verifier) = auth_verifier else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Password verifier is required",
-                ));
+                panic!("Password verifier is required for password authentication");
             };
             match client_auth.password {
                 Some(ref password) if password.is_empty() => {
@@ -176,10 +174,7 @@ where
                             message: "Password is required".to_string(),
                         })
                         .await?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Password is required",
-                    ));
+                    return Err(HandshakeError::PasswordRequired);
                 }
                 Some(ref password) => {
                     if !password_verifier.verify_password(password) {
@@ -189,10 +184,7 @@ where
                                 message: "Invalid password".to_string(),
                             })
                             .await?;
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "Invalid password",
-                        ));
+                        return Err(HandshakeError::InvalidPassword);
                     } else {
                         messages
                             .write_message(protocol::ServerAuthAck {
@@ -209,18 +201,12 @@ where
                             message: "Password is required".to_string(),
                         })
                         .await?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Password is required",
-                    ));
+                    return Err(HandshakeError::PasswordRequired);
                 }
             };
         } else if auth_method == AuthMethod::Signature as i32 {
             let AuthVerifier::Signature(signature_verifier) = auth_verifier else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Signature verifier is required",
-                ));
+                panic!("Signature verifier is required for signature authentication");
             };
             match client_auth.signature {
                 Some(ref signature) if signature.is_empty() => {
@@ -230,10 +216,7 @@ where
                             message: "Signature is required".to_string(),
                         })
                         .await?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Signature is required",
-                    ));
+                    return Err(HandshakeError::SignatureRequired);
                 }
                 Some(ref signature) => {
                     if !signature_verifier.verify_signature(signature) {
@@ -243,10 +226,7 @@ where
                                 message: "Invalid signature".to_string(),
                             })
                             .await?;
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::PermissionDenied,
-                            "Invalid signature",
-                        ));
+                        return Err(HandshakeError::SignatureInvalid);
                     } else {
                         messages
                             .write_message(protocol::ServerAuthAck {
@@ -263,10 +243,7 @@ where
                             message: "Signature is required".to_string(),
                         })
                         .await?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Signature is required",
-                    ));
+                    return Err(HandshakeError::SignatureRequired);
                 }
             };
         }
