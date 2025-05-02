@@ -94,6 +94,34 @@ where
         monitors,
     })?;
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
+
+    // Send ClientAuth message if auth_method is set
+    if let Some(auth_method) = server_hello.auth_method {
+        let client_auth = match auth_method {
+            protocol::server_hello_ack::AuthMethod::PASSWORD => {
+                // Prompt for password
+                let password = "user_password".to_string(); // Replace with actual password input
+                protocol::ClientAuth {
+                    password: Some(password),
+                    signature: None,
+                }
+            }
+            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
+                // Generate or retrieve signature
+                let signature = vec![0u8; 64]; // Replace with actual signature generation
+                protocol::ClientAuth {
+                    password: None,
+                    signature: Some(signature),
+                }
+            }
+            _ => protocol::ClientAuth {
+                password: None,
+                signature: None,
+            },
+        };
+        messages.write_message(client_auth)?;
+    }
+
     Ok(server_hello)
 }
 
@@ -121,5 +149,32 @@ where
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
     }
     messages.write_message(server_hello)?;
+
+    // Verify ClientAuth message if auth_method is set
+    if let Some(auth_method) = server_hello.auth_method {
+        let client_auth = protocol::ClientAuth::decode(messages.read_message()?)?;
+        match auth_method {
+            protocol::server_hello_ack::AuthMethod::PASSWORD => {
+                let expected_password = "expected_password".to_string(); // Replace with actual expected password
+                if client_auth.password != Some(expected_password) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Invalid password",
+                    ));
+                }
+            }
+            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
+                let expected_signature = vec![0u8; 64]; // Replace with actual expected signature
+                if client_auth.signature != Some(expected_signature) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Invalid signature",
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
     Ok(client_hello)
 }

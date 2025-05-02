@@ -137,6 +137,46 @@ pub async fn connect_tls(
     }
     let mut messages = Messages::new(tls_stream);
     let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
+
+    // Send ClientAuth message if auth_method is set
+    if let Some(auth_method) = hello.auth_method {
+        let client_auth = match auth_method {
+            protocol::server_hello_ack::AuthMethod::PASSWORD => {
+                // Retrieve stored password if available
+                let password = known_hosts
+                    .find_host(host)
+                    .and_then(|known_host| known_host.password.clone())
+                    .unwrap_or_else(|| {
+                        // Prompt for password if not stored
+                        "user_password".to_string() // Replace with actual password input
+                    });
+                protocol::ClientAuth {
+                    password: Some(password),
+                    signature: None,
+                }
+            }
+            protocol::server_hello_ack::AuthMethod::SIGNATURE => {
+                // Retrieve stored signature if available
+                let signature = known_hosts
+                    .find_host(host)
+                    .and_then(|known_host| known_host.signature.clone())
+                    .unwrap_or_else(|| {
+                        // Generate or retrieve signature if not stored
+                        vec![0u8; 64] // Replace with actual signature generation
+                    });
+                protocol::ClientAuth {
+                    password: None,
+                    signature: Some(signature),
+                }
+            }
+            _ => protocol::ClientAuth {
+                password: None,
+                signature: None,
+            },
+        };
+        messages.write_message(client_auth).await?;
+    }
+
     Ok((hello, messages))
 }
 
