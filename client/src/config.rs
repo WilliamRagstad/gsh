@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use homedir::my_home;
@@ -16,6 +17,7 @@ fn gsh_dir() -> PathBuf {
 pub struct KnownHost {
     host: String,               // Hostname or IP address
     fingerprints: Vec<Vec<u8>>, // Fingerprint of the host's public key
+    id_file_ref: Option<String>, // Reference to an ID file in IdFiles
 }
 
 impl KnownHost {
@@ -60,13 +62,53 @@ impl KnownHosts {
     }
 
     /// Add a new host to the list of known hosts
-    pub fn add_host(&mut self, host: String, fingerprints: Vec<Vec<u8>>) {
-        self.hosts.push(KnownHost { host, fingerprints });
+    pub fn add_host(&mut self, host: String, fingerprints: Vec<Vec<u8>>, id_file_ref: Option<String>) {
+        self.hosts.push(KnownHost { host, fingerprints, id_file_ref });
         self.save();
     }
 
     /// Find a host in the list of known hosts
     pub fn find_host(&self, host: &str) -> Option<&KnownHost> {
         self.hosts.iter().find(|h| h.host == host)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IdFiles {
+    id_files: HashMap<String, PathBuf>, // List of ID files
+}
+
+impl IdFiles {
+    /// Load ID files from a file and create it if it doesn't exist
+    pub fn load() -> Self {
+        let path = gsh_dir().join("id_files.json");
+        if !path.exists() {
+            std::fs::create_dir_all(gsh_dir()).expect("Failed to create .gsh directory");
+            std::fs::File::create(&path).expect("Failed to create id_files.json file");
+        }
+        // Load the file and parse it into an IdFiles struct
+        let file = std::fs::File::open(&path).expect("Failed to open id_files.json file");
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).unwrap_or_else(|_| IdFiles::default())
+    }
+
+    /// Save the ID files to a file
+    pub fn save(&self) {
+        let path = gsh_dir().join("id_files.json");
+        let file = std::fs::File::create(&path).expect("Failed to create id_files.json file");
+        let writer = std::io::BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, self).expect("Failed to save id_files.json file");
+    }
+
+    /// Add a new ID file to the list of ID files
+    pub fn add_id_file(&mut self, name: String, path: PathBuf) {
+        self.id_files.insert(name, path);
+        self.save();
+    }
+
+    /// Find an ID file in the list of ID files
+    pub fn find_id_file(&self, name: &str) -> Option<&PathBuf> {
+        self.id_files.get(name)
     }
 }

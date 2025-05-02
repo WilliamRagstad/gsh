@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dialoguer::Confirm;
+use dialoguer::{Confirm, Password};
 use libgsh::shared::{
     protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
@@ -148,7 +148,10 @@ pub async fn connect_tls(
                     .and_then(|known_host| known_host.password.clone())
                     .unwrap_or_else(|| {
                         // Prompt for password if not stored
-                        "user_password".to_string() // Replace with actual password input
+                        Password::new()
+                            .with_prompt("Enter password")
+                            .interact()
+                            .unwrap()
                     });
                 protocol::ClientAuth {
                     password: Some(password),
