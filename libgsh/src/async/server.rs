@@ -82,6 +82,7 @@ where
             &mut messages,
             &[crate::shared::PROTOCOL_VERSION],
             ServiceT::server_hello(),
+            ServiceT::auth_verifier(),
         )
         .await?;
         let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
@@ -93,6 +94,7 @@ where
             monitors,
             addr.port()
         );
+
         let service = ServiceT::new();
         service.main(messages).await?;
         Ok(())

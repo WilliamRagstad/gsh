@@ -4,7 +4,7 @@ use libgsh::{
     frame::optimize_segments,
     shared::{
         protocol::{
-            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+            server_hello_ack::{window_settings, AuthMethod, FrameFormat, WindowSettings},
             Frame, ServerHelloAck,
         },
         ClientEvent,
@@ -131,6 +131,7 @@ impl SimpleService for ColorService {
                     frame_anchor: window_settings::WindowAnchor::Center.into(),
                 },
             ],
+            auth_method: None,
         }
     }
 }

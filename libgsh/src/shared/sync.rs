@@ -3,9 +3,25 @@ use crate::shared::{
     LengthType, LENGTH_SIZE, PROTOCOL_VERSION,
 };
 use prost::Message;
+use rsa::{pkcs1::DecodeRsaPublicKey, pkcs1v15::Signature};
+use rsa::{pkcs1::EncodeRsaPublicKey, RsaPublicKey};
+use rsa::{
+    pkcs1v15::VerifyingKey,
+    signature::{SignatureEncoding, Verifier},
+};
+use sha2::Sha256;
 use std::io::{Read, Write};
 
-use super::protocol::status_update::StatusType;
+use super::{
+    auth::{AuthProvider, AuthVerifier},
+    protocol::{
+        client_auth::{self, AuthData},
+        server_auth_ack::AuthStatus,
+        server_hello_ack::{self, AuthMethod, SignatureMethod},
+        status_update::StatusType,
+    },
+    HandshakeError,
+};
 
 /// A codec for reading and writing length-value encoded messages.
 pub struct MessageCodec<S: Read + Write + Send> {
@@ -73,12 +89,15 @@ impl<S: Read + Write + Send> MessageCodec<S> {
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
-pub fn handshake_client<S>(
+pub fn handshake_client<S, A>(
     messages: &mut MessageCodec<S>,
     monitors: Vec<MonitorInfo>,
-) -> std::io::Result<ServerHelloAck>
+    mut auth_provider: A,
+    host: &str,
+) -> Result<ServerHelloAck, HandshakeError>
 where
     S: Read + Write + Send,
+    A: AuthProvider,
 {
     let os = match std::env::consts::OS {
         "linux" => protocol::client_hello::Os::Linux,
@@ -94,6 +113,31 @@ where
         monitors,
     })?;
     let server_hello = protocol::ServerHelloAck::decode(messages.read_message()?)?;
+
+    // Send ClientAuth message if auth_method is set
+    if let Some(server_hello_ack::AuthMethod::Password(_)) = server_hello.auth_method {
+        messages.write_message(protocol::ClientAuth {
+            auth_data: Some(client_auth::AuthData::Password(client_auth::Password {
+                password: auth_provider.password(host),
+            })),
+        })?;
+    } else if let Some(server_hello_ack::AuthMethod::Signature(SignatureMethod { sign_message })) =
+        &server_hello.auth_method
+    {
+        let (signature, public_key): (Signature, RsaPublicKey) = auth_provider
+            .signature(host, sign_message)
+            .ok_or(HandshakeError::SignatureRequired)?;
+        let public_key_pem = public_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)?;
+        let public_key_pem_bytes = public_key_pem.as_bytes().to_vec();
+        let signature_bytes = signature.to_bytes().to_vec();
+        messages.write_message(protocol::ClientAuth {
+            auth_data: Some(client_auth::AuthData::Signature(client_auth::Signature {
+                signature: signature_bytes,
+                public_key: public_key_pem_bytes,
+            })),
+        })?;
+    }
+
     Ok(server_hello)
 }
 
@@ -104,10 +148,12 @@ pub fn handshake_server<S>(
     messages: &mut MessageCodec<S>,
     supported_protocol_versions: &[u32],
     server_hello: ServerHelloAck,
-) -> std::io::Result<ClientHello>
+    auth_verifier: Option<AuthVerifier>,
+) -> Result<ClientHello, HandshakeError>
 where
     S: Read + Write + Send,
 {
+    let auth_method = server_hello.auth_method.clone();
     let client_hello = protocol::ClientHello::decode(messages.read_message()?)?;
     if !supported_protocol_versions.contains(&client_hello.protocol_version) {
         let msg = format!(
@@ -118,8 +164,107 @@ where
             kind: StatusType::Exit as i32,
             details: None,
         })?;
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        return Err(HandshakeError::AnyError(msg.into()));
     }
     messages.write_message(server_hello)?;
+
+    // Verify ClientAuth message if auth_method is set
+
+    if let Some(AuthMethod::Password(_)) = auth_method {
+        let client_auth: protocol::ClientAuth =
+            protocol::ClientAuth::decode(messages.read_message()?)?;
+        let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
+        let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
+        let AuthVerifier::Password(password_verifier) = auth_verifier else {
+            panic!("Password verifier is required for password authentication");
+        };
+        let AuthData::Password(client_auth) = client_auth else {
+            return Err(HandshakeError::PasswordRequired);
+        };
+        if client_auth.password.is_empty() {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Failure as i32,
+                message: "Password is required".to_string(),
+            })?;
+            return Err(HandshakeError::PasswordRequired);
+        }
+        if !password_verifier.verify(&client_auth.password) {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Failure as i32,
+                message: "Invalid password".to_string(),
+            })?;
+            return Err(HandshakeError::InvalidPassword);
+        } else {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Success as i32,
+                message: "Password verified".to_string(),
+            })?;
+        }
+    } else if let Some(AuthMethod::Signature(server_auth)) = auth_method {
+        let client_auth: protocol::ClientAuth =
+            protocol::ClientAuth::decode(messages.read_message()?)?;
+        let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
+        let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
+        let AuthVerifier::Signature(signature_verifier) = auth_verifier else {
+            panic!("Signature verifier is required for signature authentication");
+        };
+        let AuthData::Signature(client_auth) = client_auth else {
+            return Err(HandshakeError::SignatureRequired);
+        };
+        if client_auth.signature.is_empty() {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Failure as i32,
+                message: "Signature is required".to_string(),
+            })?;
+            return Err(HandshakeError::SignatureRequired);
+        }
+        let public_key_pem = String::from_utf8_lossy(&client_auth.public_key);
+        let public_key = match RsaPublicKey::from_pkcs1_pem(&public_key_pem) {
+            Ok(public_key) => public_key,
+            Err(err) => {
+                messages.write_message(protocol::ServerAuthAck {
+                    status: AuthStatus::Failure as i32,
+                    message: format!("Invalid public key: {}", err),
+                })?;
+                return Err(HandshakeError::SignatureInvalid);
+            }
+        };
+        let signature = match Signature::try_from(&client_auth.signature[..]) {
+            Ok(signature) => signature,
+            Err(err) => {
+                messages.write_message(protocol::ServerAuthAck {
+                    status: AuthStatus::Failure as i32,
+                    message: format!("Invalid signature: {}", err),
+                })?;
+                return Err(HandshakeError::SignatureInvalid);
+            }
+        };
+
+        if !signature_verifier.verify(&public_key) {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Failure as i32,
+                message: "Verification failed".to_string(),
+            })?;
+            return Err(HandshakeError::SignatureInvalid);
+        }
+        if !verify_signature(&server_auth.sign_message, signature, public_key) {
+            messages.write_message(protocol::ServerAuthAck {
+                status: AuthStatus::Failure as i32,
+                message: "Verification failed".to_string(),
+            })?;
+            return Err(HandshakeError::SignatureInvalid);
+        }
+        messages.write_message(protocol::ServerAuthAck {
+            status: AuthStatus::Success as i32,
+            message: "Signature verified!".to_string(),
+        })?;
+    }
+
     Ok(client_hello)
+}
+
+/// Verify the signature using the public key and the sign message from the server
+fn verify_signature(sign_message: &[u8], signature: Signature, public_key: RsaPublicKey) -> bool {
+    let verifying_key = VerifyingKey::<Sha256>::new(public_key);
+    verifying_key.verify(sign_message, &signature).is_ok()
 }

@@ -1,12 +1,23 @@
+use auth::ClientAuthProvider;
+use clap::{Parser, Subcommand};
+use client::Client;
+use libgsh::{
+    rsa::{pkcs1v15::VerifyingKey, signature::Verifier},
+    sha2::Sha256,
+    shared::{
+        auth::AuthProvider,
+        protocol::{
+            client_hello::MonitorInfo,
+            server_hello_ack::{
+                window_settings::{self, WindowMode},
+                FrameFormat, WindowSettings,
+            },
+        },
+    },
+};
 use std::process::exit;
 
-use clap::Parser;
-use client::Client;
-use libgsh::shared::protocol::{
-    client_hello::MonitorInfo,
-    server_hello_ack::{window_settings, window_settings::WindowMode, FrameFormat, WindowSettings},
-};
-
+mod auth;
 mod client;
 mod config;
 mod network;
@@ -16,13 +27,37 @@ mod network;
 struct Args {
     /// The host to connect to.
     #[clap(value_parser)]
-    host: String,
+    host: Option<String>,
     /// The port to connect to.
     #[clap(short, long, default_value_t = 1122)]
     port: u16,
     /// Disable TLS server certificate verification.
     #[clap(long)]
     insecure: bool,
+    /// The name of the ID file to use for authentication.
+    #[clap(short, long)]
+    id: Option<String>,
+    /// Subcommand to execute.
+    #[clap(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Create a new named ID file
+    NewId {
+        /// The name of the ID file
+        name: String,
+    },
+    /// List all known hosts
+    ListHosts,
+    /// List all IDs
+    ListIds,
+    /// Verify the ID files
+    VerifyId {
+        /// The name of the ID file
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -33,7 +68,50 @@ async fn main() {
         .init();
     let args = Args::parse();
 
-    let mut known_hosts = config::KnownHosts::load();
+    let known_hosts = config::KnownHosts::load();
+    let mut id_files = config::IdFiles::load();
+
+    if let Some(command) = args.command {
+        match command {
+            Command::NewId { name } => {
+                let path = id_files.create_id_file(&name);
+                println!("ID file created at {} for {}", path.display(), name);
+            }
+            Command::ListHosts => {
+                println!("Known hosts:");
+                for host in known_hosts.hosts {
+                    println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
+                }
+            }
+            Command::ListIds => {
+                println!("ID files:");
+                for (id_name, id_file) in id_files.files() {
+                    println!("- {}: {}", id_name, id_file.display());
+                }
+            }
+            Command::VerifyId { name } => {
+                const MESSAGE: &[u8] = b"test";
+                let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
+                match provider.signature("", MESSAGE) {
+                    Some((signature, pub_key)) => {
+                        log::trace!("Public key: {:?}", pub_key);
+                        log::trace!("Signature: {:?}", signature);
+                        let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
+                        if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
+                            log::error!("Signature verification failed: {}", err);
+                            println!("Signature verification failed!");
+                        } else {
+                            println!("Successfully verified ID!");
+                        }
+                    }
+                    None => {
+                        println!("Invalid ID file or no public key found.");
+                    }
+                }
+            }
+        }
+        return;
+    }
 
     // Initialize SDL2
     let sdl = sdl2::init().unwrap_or_else(|e| {
@@ -45,13 +123,20 @@ async fn main() {
         exit(1);
     });
 
-    println!("Connecting to {}:{}...", args.host, args.port);
+    let host = args.host.unwrap_or_else(|| {
+        log::error!("Host is required unless creating an ID file.");
+        exit(1);
+    });
+
+    println!("Connecting to {}:{}...", host, args.port);
     let (hello, messages) = network::connect_tls(
-        &args.host,
+        &host,
         args.port,
         args.insecure,
         monitor_info(&video),
-        &mut known_hosts,
+        known_hosts,
+        id_files,
+        args.id,
     )
     .await
     .unwrap_or_else(|e| {
@@ -75,7 +160,7 @@ async fn main() {
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
         client
-            .create_window(&default_window(args.host))
+            .create_window(&default_window(host))
             .unwrap_or_else(|e| {
                 log::error!("Failed to create default window: {}", e);
                 exit(1);

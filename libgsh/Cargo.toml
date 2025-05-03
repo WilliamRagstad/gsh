@@ -16,6 +16,7 @@ documentation = "https://docs.rs/libgsh/"
 keywords = ["graphics", "shell", "network", "gui", "server"]
 
 [dependencies]
+rsa = "0.9.8"
 rcgen = "0.13.2"
 log = "0.4.27"
 thiserror = "2.0.12"
@@ -26,6 +27,7 @@ tokio-rustls = { version = "0.26.2", features = [
 async-trait = "0.1.88"
 prost = "0.13.5"
 os_info = "3.10.0"
+sha2 = { version = "0.10.9", features = ["oid"] }
 
 [build-dependencies]
 prost-build = "0.13.5"

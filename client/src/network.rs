@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use dialoguer::Confirm;
+use libgsh::sha2::{Digest, Sha256};
 use libgsh::shared::{
     protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
 };
-use sha2::Digest;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_rustls::rustls::{
     self,
@@ -16,7 +16,7 @@ use tokio_rustls::rustls::{
 // use std::{net::TcpStream, sync::Arc};
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
-use crate::config;
+use crate::{auth::ClientAuthProvider, config};
 
 // pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
 pub type Messages = AsyncMessageCodec<TlsStream<TcpStream>>;
@@ -68,7 +68,7 @@ async fn verify_host(
 ) -> anyhow::Result<bool> {
     let mut fingerprints: Vec<Vec<u8>> = Vec::new();
     for cert in certs {
-        let fingerprint = sha2::Sha256::digest(cert.as_ref());
+        let fingerprint = Sha256::digest(cert.as_ref());
         fingerprints.push(fingerprint.to_vec());
     }
     if let Some(known) = known_hosts.find_host(host) {
@@ -79,7 +79,7 @@ async fn verify_host(
             log::warn!(
                 "Host {} fingerprint mismatch. Expected: {:X?}, Found: {:X?}",
                 host,
-                known.fingerprints(),
+                known.fingerprints,
                 fingerprints
             );
             Ok(false)
@@ -103,7 +103,7 @@ async fn verify_host(
             .default(false)
             .interact()?;
         if confirmation {
-            known_hosts.add_host(host.to_string(), fingerprints.clone());
+            known_hosts.add_host(host.to_string(), fingerprints.clone(), None, None);
             log::info!("Host {} added to known hosts.", host);
             Ok(true)
         } else {
@@ -118,7 +118,9 @@ pub async fn connect_tls(
     port: u16,
     insecure: bool,
     monitors: Vec<MonitorInfo>,
-    known_hosts: &mut config::KnownHosts,
+    mut known_hosts: config::KnownHosts,
+    id_files: config::IdFiles,
+    id_override: Option<String>,
 ) -> anyhow::Result<(ServerHelloAck, Messages)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = Arc::new(tls_config(insecure)?);
@@ -128,7 +130,7 @@ pub async fn connect_tls(
     let mut tls_stream = tls_connector.connect(server_name, sock).await?;
     if !insecure {
         let certs = tls_stream.get_ref().1.peer_certificates().unwrap();
-        if !verify_host(known_hosts, host, certs).await? {
+        if !verify_host(&mut known_hosts, host, certs).await? {
             tls_stream.get_mut().1.send_close_notify();
             tls_stream.get_mut().0.shutdown().await?;
             log::warn!("Host verification failed. Connection closed.");
@@ -136,7 +138,14 @@ pub async fn connect_tls(
         }
     }
     let mut messages = Messages::new(tls_stream);
-    let hello = libgsh::shared::r#async::handshake_client(&mut messages, monitors).await?;
+    let hello = libgsh::shared::r#async::handshake_client(
+        &mut messages,
+        monitors,
+        ClientAuthProvider::new(known_hosts, id_files, id_override),
+        host,
+    )
+    .await?;
+
     Ok((hello, messages))
 }
 

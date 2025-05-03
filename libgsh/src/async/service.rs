@@ -1,5 +1,6 @@
 use super::Messages;
 use crate::shared::{
+    auth::AuthVerifier,
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
     ClientEvent,
@@ -20,6 +21,12 @@ pub trait AsyncService: Send + Sync + 'static {
     /// This is optional and can be overridden by the service implementation.
     /// If not provided, the client may use its own default settings.
     fn server_hello() -> ServerHelloAck;
+
+    /// Auth verifier for the service.\
+    /// This is used to verify the client authentication method.
+    fn auth_verifier() -> Option<AuthVerifier> {
+        None
+    }
 
     /// Main event loop for the service.\
     /// This is running in a separate thread, handling client events and sending frames back to the client.

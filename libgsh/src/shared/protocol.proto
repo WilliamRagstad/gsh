@@ -65,6 +65,42 @@ message ServerHelloAck {
 	}
 	// List of initial window settings for the client
 	repeated WindowSettings windows = 2;
+
+	oneof auth_method {
+		PasswordMethod password = 6; // Password-based authentication
+		SignatureMethod signature = 7; // Signature-based authentication
+	}
+	message PasswordMethod {}
+	message SignatureMethod {
+		bytes sign_message = 1; // Message to be signed for authentication
+	}
+}
+
+// Message representing client authentication data
+// Client -> Server
+message ClientAuth {
+	oneof auth_data {
+		Password password = 1;
+		Signature signature = 2;
+	}
+	message Password {
+		string password = 1;
+	}
+	message Signature {
+		bytes signature = 1;
+		bytes public_key = 2;
+	}
+}
+
+// Message representing server authentication data
+// Server -> Client
+message ServerAuthAck {
+	enum AuthStatus {
+		SUCCESS = 0;
+		FAILURE = 1;
+	}
+	AuthStatus status = 1; // Authentication status (success or failure)
+	string message = 2;   // Message providing additional information about the authentication status
 }
 
 // Message representing a frame of image data

@@ -1,6 +1,5 @@
 use super::service::SimpleService;
-use crate::shared::protocol::client_hello;
-use crate::{simple::Messages, Result};
+use crate::{shared::protocol::client_hello, simple::Messages, Result};
 use std::{net::TcpListener, sync::Arc};
 use tokio_rustls::rustls::{ServerConfig, ServerConnection, StreamOwned};
 
@@ -76,6 +75,7 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
             &mut messages,
             &[crate::shared::PROTOCOL_VERSION],
             ServiceT::server_hello(),
+            ServiceT::auth_verifier(),
         )?;
         let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
         let monitors = client.monitors.len();
@@ -86,6 +86,7 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
             monitors,
             addr.port(),
         );
+
         let service = ServiceT::new();
         service.main(messages)?;
         Ok(())
