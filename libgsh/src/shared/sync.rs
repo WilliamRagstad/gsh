@@ -127,7 +127,7 @@ where
         let (signature, public_key): (Signature, RsaPublicKey) = auth_provider
             .signature(host, sign_message)
             .ok_or(HandshakeError::SignatureRequired)?;
-        let public_key_pem = public_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let public_key_pem = public_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)?;
         let public_key_pem_bytes = public_key_pem.as_bytes().to_vec();
         let signature_bytes = signature.to_bytes().to_vec();
         messages.write_message(protocol::ClientAuth {

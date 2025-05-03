@@ -23,6 +23,7 @@ const LENGTH_SIZE: usize = std::mem::size_of::<LengthType>();
 pub enum HandshakeError {
     IoError(#[from] std::io::Error),
     ProstDecodeError(#[from] prost::DecodeError),
+    Pkcs1Error(#[from] rsa::pkcs1::Error),
     PasswordRequired,
     InvalidPassword,
     SignatureRequired,
@@ -34,6 +35,7 @@ impl std::fmt::Display for HandshakeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HandshakeError::IoError(err) => write!(f, "IO error: {}", err),
+            HandshakeError::Pkcs1Error(err) => write!(f, "PKCS#1 error: {}", err),
             HandshakeError::PasswordRequired => write!(f, "Password required"),
             HandshakeError::InvalidPassword => write!(f, "Invalid password"),
             HandshakeError::SignatureRequired => write!(f, "Signature required"),
