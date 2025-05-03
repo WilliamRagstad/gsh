@@ -66,19 +66,30 @@ message ServerHelloAck {
 	// List of initial window settings for the client
 	repeated WindowSettings windows = 2;
 
-	enum AuthMethod {
-		NONE = 0;
-		PASSWORD = 1;
-		SIGNATURE = 2;
+	oneof auth_method {
+		PasswordMethod password = 6; // Password-based authentication
+		SignatureMethod signature = 7; // Signature-based authentication
 	}
-	AuthMethod auth_method = 3;
+	message PasswordMethod {}
+	message SignatureMethod {
+		bytes sign_message = 1; // Message to be signed for authentication
+	}
 }
 
 // Message representing client authentication data
 // Client -> Server
 message ClientAuth {
-	optional string password = 1;
-	optional bytes signature = 2;
+	oneof auth_data {
+		Password password = 1;
+		Signature signature = 2;
+	}
+	message Password {
+		string password = 1;
+	}
+	message Signature {
+		bytes signature = 1;
+		bytes public_key = 2;
+	}
 }
 
 // Message representing server authentication data

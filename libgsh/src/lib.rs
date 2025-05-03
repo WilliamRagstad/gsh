@@ -13,6 +13,7 @@ pub mod simple;
 pub use async_trait;
 pub use rcgen;
 pub use rsa;
+pub use sha2;
 pub use tokio;
 pub use tokio_rustls;
 

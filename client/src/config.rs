@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::{collections::HashMap, io::Read};
 
 use homedir::my_home;
-use libgsh::rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use libgsh::rsa::pkcs1::{
+    DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey,
+};
 use libgsh::rsa::rand_core::OsRng;
 use libgsh::rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -148,7 +150,7 @@ impl IdFiles {
         self.id_files.get(name)
     }
 
-    pub fn read_id_file(&self, name: &str) -> Option<Vec<u8>> {
+    pub fn read_id_file(&self, name: &str) -> Option<(RsaPrivateKey, RsaPublicKey)> {
         if let Some(path) = self.find_id_file(name) {
             let file = std::fs::File::open(path).expect("Failed to open ID file");
             let mut reader = std::io::BufReader::new(file);
@@ -156,7 +158,10 @@ impl IdFiles {
             reader
                 .read_to_end(&mut signature)
                 .expect("Failed to read ID file");
-            Some(signature)
+            let pem = String::from_utf8_lossy(&signature);
+            let private_key = extract_private_key(&pem)?;
+            let public_key = extract_public_key(&pem)?;
+            Some((private_key, public_key))
         } else {
             log::warn!("ID file {} not found.", name);
             None
@@ -187,5 +192,48 @@ impl IdFiles {
 
         self.add_id_file(name, path.clone());
         path
+    }
+}
+
+/// Extract the public key from the signature
+fn extract_public_key(pem: &str) -> Option<RsaPublicKey> {
+    const PEM_PUBLIC_KEY_HEADER: &str = "-----BEGIN RSA PUBLIC KEY-----";
+    const PEM_PUBLIC_KEY_FOOTER: &str = "-----END RSA PUBLIC KEY-----";
+
+    if !pem.contains(PEM_PUBLIC_KEY_HEADER) || !pem.contains(PEM_PUBLIC_KEY_FOOTER) {
+        log::error!("Invalid PEM format for RSA public key.");
+        return None;
+    }
+
+    match RsaPublicKey::from_pkcs1_pem(
+        &pem[pem.find(PEM_PUBLIC_KEY_HEADER).unwrap()
+            ..(pem.find(PEM_PUBLIC_KEY_FOOTER).unwrap() + PEM_PUBLIC_KEY_FOOTER.len())],
+    ) {
+        Ok(public_key) => Some(public_key),
+        Err(err) => {
+            log::error!("Failed to parse PEM public key: {}", err);
+            None
+        }
+    }
+}
+
+fn extract_private_key(pem: &str) -> Option<RsaPrivateKey> {
+    const PEM_PRIVATE_KEY_HEADER: &str = "-----BEGIN RSA PRIVATE KEY-----";
+    const PEM_PRIVATE_KEY_FOOTER: &str = "-----END RSA PRIVATE KEY-----";
+
+    if !pem.contains(PEM_PRIVATE_KEY_HEADER) || !pem.contains(PEM_PRIVATE_KEY_FOOTER) {
+        log::error!("Invalid PEM format for RSA private key.");
+        return None;
+    }
+
+    match RsaPrivateKey::from_pkcs1_pem(
+        &pem[pem.find(PEM_PRIVATE_KEY_HEADER).unwrap()
+            ..(pem.find(PEM_PRIVATE_KEY_FOOTER).unwrap() + PEM_PRIVATE_KEY_FOOTER.len())],
+    ) {
+        Ok(private_key) => Some(private_key),
+        Err(err) => {
+            log::error!("Failed to parse PEM private key: {}", err);
+            None
+        }
     }
 }

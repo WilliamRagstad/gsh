@@ -1,7 +1,12 @@
 use crate::config::{IdFiles, KnownHosts};
 use dialoguer::{Confirm, Password};
 use libgsh::{
-    rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey},
+    rsa::{
+        pkcs1v15::{self, Signature},
+        signature::Signer,
+        RsaPrivateKey, RsaPublicKey,
+    },
+    sha2::Sha256,
     shared::auth::AuthProvider,
 };
 
@@ -49,14 +54,15 @@ impl AuthProvider for ClientAuthProvider {
             }
             self.known_hosts.save();
         }
+
         password
     }
 
-    fn signature(&mut self, host: &str) -> Option<RsaPublicKey> {
+    fn signature(&mut self, host: &str, sign_message: &[u8]) -> Option<(Signature, RsaPublicKey)> {
         // Check if an ID file is provided as an override
         if let Some(id_override) = &self.id_override {
-            if let Some(pem) = self.id_files.read_id_file(id_override) {
-                return extract_public_key(pem);
+            if let Some((private_key, public_key)) = self.id_files.read_id_file(id_override) {
+                return generate_signature(sign_message, private_key, public_key);
             } else {
                 log::warn!("ID file {} not found.", id_override);
             }
@@ -65,8 +71,8 @@ impl AuthProvider for ClientAuthProvider {
         if let Some(known_host) = self.known_hosts.find_host(host) {
             if let Some(id) = known_host.id_file_ref() {
                 // Lookup signature in ID file
-                if let Some(pem) = self.id_files.read_id_file(id) {
-                    return extract_public_key(pem);
+                if let Some((private_key, public_key)) = self.id_files.read_id_file(id) {
+                    return generate_signature(sign_message, private_key, public_key);
                 } else {
                     log::warn!("ID file {} not found.", id);
                 }
@@ -85,7 +91,7 @@ impl AuthProvider for ClientAuthProvider {
             .interact()
             .unwrap();
         let selected_id_file_name = &id_file_names[selected_id_file];
-        let signature = self.id_files.read_id_file(selected_id_file_name).unwrap();
+        let (private_key, public_key) = self.id_files.read_id_file(selected_id_file_name).unwrap();
 
         let confirmation = Confirm::new()
             .with_prompt("Do you want to store this signature?")
@@ -106,30 +112,16 @@ impl AuthProvider for ClientAuthProvider {
             }
             self.known_hosts.save();
         }
-        extract_public_key(signature)
+        generate_signature(sign_message, private_key, public_key)
     }
 }
 
-/// Extract the public key from the signature
-fn extract_public_key(pem: Vec<u8>) -> Option<RsaPublicKey> {
-    let pem = String::from_utf8_lossy(&pem);
-
-    const PEM_PUBLIC_KEY_HEADER: &str = "-----BEGIN RSA PUBLIC KEY-----";
-    const PEM_PUBLIC_KEY_FOOTER: &str = "-----END RSA PUBLIC KEY-----";
-
-    if !pem.contains(PEM_PUBLIC_KEY_HEADER) || !pem.contains(PEM_PUBLIC_KEY_FOOTER) {
-        log::error!("Invalid PEM format for RSA public key.");
-        return None;
-    }
-
-    match RsaPublicKey::from_pkcs1_pem(
-        &pem[pem.find(PEM_PUBLIC_KEY_HEADER).unwrap()
-            ..(pem.find(PEM_PUBLIC_KEY_FOOTER).unwrap() + PEM_PUBLIC_KEY_FOOTER.len())],
-    ) {
-        Ok(public_key) => Some(public_key),
-        Err(err) => {
-            log::error!("Failed to parse PEM public key: {}", err);
-            None
-        }
-    }
+fn generate_signature(
+    sign_message: &[u8],
+    private_key: RsaPrivateKey,
+    public_key: RsaPublicKey,
+) -> Option<(Signature, RsaPublicKey)> {
+    let signing_key = pkcs1v15::SigningKey::<Sha256>::new(private_key);
+    let signature = signing_key.sign(sign_message);
+    Some((signature, public_key))
 }

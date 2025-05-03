@@ -131,7 +131,7 @@ impl SimpleService for ColorService {
                     frame_anchor: window_settings::WindowAnchor::Center.into(),
                 },
             ],
-            auth_method: AuthMethod::None.into(),
+            auth_method: None,
         }
     }
 }

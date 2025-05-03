@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use dialoguer::Confirm;
+use libgsh::sha2::{Digest, Sha256};
 use libgsh::shared::{
     protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
     r#async::AsyncMessageCodec,
 };
-use sha2::Digest;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_rustls::rustls::{
     self,
@@ -68,7 +68,7 @@ async fn verify_host(
 ) -> anyhow::Result<bool> {
     let mut fingerprints: Vec<Vec<u8>> = Vec::new();
     for cert in certs {
-        let fingerprint = sha2::Sha256::digest(cert.as_ref());
+        let fingerprint = Sha256::digest(cert.as_ref());
         fingerprints.push(fingerprint.to_vec());
     }
     if let Some(known) = known_hosts.find_host(host) {

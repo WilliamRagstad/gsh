@@ -42,26 +42,27 @@ The `libgsh` library is designed to be modular and extensible, allowing develope
 ```mermaid
 sequenceDiagram
 	participant Client as gsh client
-	participant CGSH as gsh library <br> (vX.X.X)
-	participant SGSH as gsh library <br> (vX.X.X)
-	participant Server as service <br> (libgsh server)
+	participant CGSH as client <br> gsh library
+	participant SGSH as server <br> gsh library
+	participant Server as libgsh service
 
 	Client->>CGSH: Connect to server
 	CGSH-->>SGSH: TLS + Handshake
 	SGSH->>Server: Client Hello message
-	SGSH->>Client: Server Hello ACK message
+	SGSH-->>CGSH: Server Hello ACK message
 	alt Server require Authentication
 	rect rgb(190, 30, 50)
-		Client->>Client: Enter credentials
-		Client->>SGSH: Send credentials
-		SGSH->>SGSH: Verify credentials
-		SGSH->>CGSH: Authentication result
+		CGSH<<->>Client: Enter credentials
+		CGSH-->>SGSH: Send credentials
+		SGSH<<->>Server: Verify credentials
+		SGSH-->>CGSH: Authentication result
 	end
 	end
+	CGSH->>Client: Server Hello ACK message
 	par main event loop
     rect rgb(50, 60, 210)
 		Client->>Server: User input
-		Server-->>Client: Visual/Media output
+		Server->>Client: Visual/Media output
 	end
 	end
 ```

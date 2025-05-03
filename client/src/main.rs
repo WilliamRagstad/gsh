@@ -1,13 +1,17 @@
 use auth::ClientAuthProvider;
 use clap::{Parser, Subcommand};
 use client::Client;
-use libgsh::shared::{
-    auth::AuthProvider,
-    protocol::{
-        client_hello::MonitorInfo,
-        server_hello_ack::{
-            window_settings::{self, WindowMode},
-            FrameFormat, WindowSettings,
+use libgsh::{
+    rsa::{pkcs1v15::VerifyingKey, signature::Verifier},
+    sha2::Sha256,
+    shared::{
+        auth::AuthProvider,
+        protocol::{
+            client_hello::MonitorInfo,
+            server_hello_ack::{
+                window_settings::{self, WindowMode},
+                FrameFormat, WindowSettings,
+            },
         },
     },
 };
@@ -86,11 +90,19 @@ async fn main() {
                 }
             }
             Command::VerifyId { name } => {
+                const MESSAGE: &[u8] = b"test";
                 let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
-                match provider.signature("") {
-                    Some(pub_key) => {
+                match provider.signature("", MESSAGE) {
+                    Some((signature, pub_key)) => {
                         log::trace!("Public key: {:?}", pub_key);
-                        println!("Verified public key!");
+                        log::trace!("Signature: {:?}", signature);
+                        let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
+                        if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
+                            log::error!("Signature verification failed: {}", err);
+                            println!("Signature verification failed!");
+                        } else {
+                            println!("Successfully verified ID!");
+                        }
                     }
                     None => {
                         println!("Invalid ID file or no public key found.");
