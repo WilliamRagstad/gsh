@@ -42,6 +42,7 @@ impl SimpleService for AuthService {
     fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: server_hello_ack::FrameFormat::Rgb.into(),
+            compression: None,
             windows: Vec::new(),
             auth_method: Some(server_hello_ack::AuthMethod::Password(())),
         }

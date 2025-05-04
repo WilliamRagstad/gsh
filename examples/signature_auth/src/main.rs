@@ -57,6 +57,7 @@ impl SimpleService for AuthService {
         rand::rng().fill_bytes(&mut sign_message);
         ServerHelloAck {
             format: FrameFormat::Rgb.into(),
+            compression: None,
             windows: Vec::new(),
             auth_method: Some(AuthMethod::Signature(SignatureMethod { sign_message })),
         }

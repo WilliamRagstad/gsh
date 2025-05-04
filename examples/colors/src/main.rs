@@ -98,6 +98,7 @@ impl SimpleService for ColorService {
     fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: FrameFormat::Rgba.into(),
+            compression: None,
             windows: vec![
                 WindowSettings {
                     window_id: WINDOW_PRIMARY,
