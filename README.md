@@ -46,6 +46,10 @@ All rendering and graphical elements are handled by the server, while the client
 
 - ### [Get Started](libgsh/README.md) 🔨
 
+  - [`gsh` Client Installation](client/README.md#quick-install) 🛠️
+  - [`libgsh` Quickstart](libgsh/README.md#quick-install) 🚀
+  - [`libgsh` API Reference](https://docs.rs/libgsh/latest/libgsh/) 📖
+
 - ### [Examples](examples/) 🎓
 
 - ### [Community](COMMUNITY.md) 👪

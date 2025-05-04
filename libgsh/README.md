@@ -3,6 +3,14 @@
 This is a SDK library for building server applications that interact seamlessly with the `gsh` client.
 It provides essential tools and abstractions to enable efficient communication between the server and the `gsh` graphical shell client application.
 
+## Quick Install
+
+Install the latest release of `libgsh` using `cargo`:
+
+```bash
+cargo install libgsh
+```
+
 ## Features
 
 - **Server-Client Communication**: Simplifies the process of establishing and managing connections with the `gsh` client.
