@@ -5,5 +5,5 @@ members = [
 	"client",
 	"examples/colors",
 	"examples/cube",
-	"examples/password_auth",
+	"examples/password_auth", "examples/signature_auth",
 ]
