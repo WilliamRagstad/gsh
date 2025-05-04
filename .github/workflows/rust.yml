@@ -17,7 +17,7 @@ jobs:
         - name: Install dependencies
           run: |
             sudo apt-get update
-            sudo apt-get install -y protobuf-compiler libpipewire-0.3-dev
+            sudo apt-get install -y protobuf-compiler libpipewire-0.3-dev libxcb1-dev
         - name: Set PKG_CONFIG_PATH environment variable
           run: echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
         - name: Set PROTOC environment variable
