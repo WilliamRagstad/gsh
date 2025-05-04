@@ -47,14 +47,12 @@ async fn main() {
 #[derive(Debug, Clone)]
 pub struct RdpService {
     last_frame: Instant,
-    previous_frame: Vec<u8>,
 }
 
 impl Default for RdpService {
     fn default() -> Self {
         Self {
             last_frame: Instant::now(),
-            previous_frame: vec![],
         }
     }
 }
@@ -134,7 +132,7 @@ impl RdpService {
             h,
             rgba_vec.len()
         );
-        let compressed = self.compress(&rgba_vec, w as usize, h as usize);
+        let compressed = self.compress(&rgba_vec, w as usize, h as usize)?;
         log::debug!(
             "Compressed image size: {} (~{:.2}%)",
             compressed.len(),
@@ -154,15 +152,12 @@ impl RdpService {
         })
     }
 
-    fn compress(&self, rgba_vec: &[u8], w: usize, h: usize) -> Vec<u8> {
+    fn compress(&self, rgba_vec: &[u8], w: usize, h: usize) -> libgsh::Result<Vec<u8>> {
         let mut encoder = libgsh::zstd::stream::Encoder::new(
             Vec::with_capacity(w * h * 4),
             ZSTD_COMPRESSION_LEVEL,
-        )
-        .expect("Failed to create zstd encoder");
-        encoder
-            .write_all(rgba_vec)
-            .expect("Failed to write to zstd encoder");
-        encoder.finish().expect("Failed to finish zstd encoder")
+        )?;
+        encoder.write_all(rgba_vec)?;
+        Ok(encoder.finish()?)
     }
 }
