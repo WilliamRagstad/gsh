@@ -32,8 +32,7 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let service = ColorService::default();
-    let server: SimpleServer<ColorService> = SimpleServer::new(service, config);
+    let server: SimpleServer<ColorService> = SimpleServer::new(ColorService::default(), config);
     server.serve().unwrap();
 }
 
@@ -45,6 +44,7 @@ const WINDOW_SECONDARY: u32 = 1;
 
 type Color = (u8, u8, u8);
 
+#[derive(Debug, Clone, Default)]
 pub struct ColorService {
     color: Color,
     prev_frame: Vec<u8>,
@@ -87,15 +87,6 @@ impl ColorService {
         self.color = Self::random_color();
         self.send_frame(messages, WINDOW_PRIMARY, self.color)?;
         Ok(())
-    }
-}
-
-impl Default for ColorService {
-    fn default() -> Self {
-        Self {
-            color: Color::default(),
-            prev_frame: Vec::new(),
-        }
     }
 }
 

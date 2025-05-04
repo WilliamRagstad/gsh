@@ -46,16 +46,27 @@ async fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let service = CubeService::new();
-    let server: AsyncServer<CubeService> = AsyncServer::new(service, config);
+    let server = AsyncServer::new(CubeService::default(), config);
     server.serve().await.unwrap();
 }
 
+#[derive(Debug, Clone)]
 pub struct CubeService {
     start: Instant,
     width: usize,
     height: usize,
     // prev_frame: Vec<u8>,
+}
+
+impl Default for CubeService {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+            width: INITIAL_WIDTH,
+            height: INITIAL_HEIGHT,
+            // prev_frame: vec![0; INITIAL_WIDTH * INITIAL_HEIGHT * PIXEL_BYTES],
+        }
+    }
 }
 
 impl CubeService {

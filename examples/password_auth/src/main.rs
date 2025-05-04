@@ -22,11 +22,11 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let service = AuthService {};
-    let server: SimpleServer<AuthService> = SimpleServer::new(service, config);
+    let server = SimpleServer::new(AuthService::default(), config);
     server.serve().unwrap();
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct AuthService {}
 
 impl SimpleService for AuthService {
