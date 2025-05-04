@@ -38,11 +38,8 @@ All rendering and graphical elements are handled by the server, while the client
 ## Features
 
 - **Customizable**: Create your own interactive graphical experiences using [`libgsh`](libgsh/README.md).
-
 - **Cross-Platform**: Lightweight client application on `Linux`, `macOS`, and `Windows`.
-
 - **Security**: `TLS 1.3` encryption ensures secure communication.
-
 - **Authentication**: Supports `password` and `public key` authentication, for secure access to private servers.
 
 ### What are you gonna build? ✨
