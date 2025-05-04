@@ -10,18 +10,16 @@ use std::io::Write;
 
 /// A trait for a simple service that can be run in a separate thread.
 /// The service is responsible for handling client events and sending frames to the client.
-pub trait SimpleService {
-    fn new() -> Self;
-
+pub trait SimpleService: Clone + Send + Sync + 'static {
     /// Initial window setting preferences for the service.\
     /// This is used in the `handshake_server` function to set the initial window settings for the client.
     /// This is optional and can be overridden by the service implementation.
     /// If not provided, the client may use its own default settings.
-    fn server_hello() -> ServerHelloAck;
+    fn server_hello(&self) -> ServerHelloAck;
 
     /// Auth verifier for the service.\
     /// This is used to verify the client authentication method.
-    fn auth_verifier() -> Option<AuthVerifier> {
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
         None
     }
 

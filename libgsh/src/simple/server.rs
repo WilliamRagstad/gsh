@@ -19,16 +19,16 @@ const DEFAULT_PORT: u16 = 1122;
 /// ```
 #[derive(Debug, Clone)]
 pub struct SimpleServer<ServiceT: SimpleService> {
-    _service: std::marker::PhantomData<ServiceT>,
+    service: ServiceT,
     config: ServerConfig,
 }
 
 impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
     /// Creates a new `SimpleServer` instance with the provided server configuration.\
     /// The `ServerConfig` is used to configure the TLS settings for the server.
-    pub fn new(config: ServerConfig) -> Self {
+    pub fn new(service: ServiceT, config: ServerConfig) -> Self {
         Self {
-            _service: std::marker::PhantomData,
+            service,
             config,
         }
     }
@@ -56,11 +56,12 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
         loop {
             let (mut stream, addr) = listener.accept()?;
             let mut conn = ServerConnection::new(Arc::new(self.config.clone()))?;
+            let service = self.service.clone();
             std::thread::spawn(move || {
                 conn.complete_io(&mut stream).unwrap();
                 let tls_stream = StreamOwned::new(conn, stream);
                 let messages = Messages::new(tls_stream);
-                if let Err(e) = Self::handle_client(messages, addr) {
+                if let Err(e) = Self::handle_client(service, messages, addr) {
                     log::error!("Service error {}: {}", addr, e);
                 }
                 println!("- Client disconnected from {}", addr);
@@ -70,12 +71,12 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
 
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
-    fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
+    fn handle_client(service: ServiceT, mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
         let client = crate::shared::sync::handshake_server(
             &mut messages,
             &[crate::shared::PROTOCOL_VERSION],
-            ServiceT::server_hello(),
-            ServiceT::auth_verifier(),
+            service.server_hello(),
+            service.auth_verifier(),
         )?;
         let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
         let monitors = client.monitors.len();
@@ -87,7 +88,6 @@ impl<ServiceT: SimpleService> SimpleServer<ServiceT> {
             addr.port(),
         );
 
-        let service = ServiceT::new();
         service.main(messages)?;
         Ok(())
     }
