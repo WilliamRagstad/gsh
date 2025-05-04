@@ -23,7 +23,7 @@ const DEFAULT_PORT: u16 = 1122;
 /// ```
 #[derive(Debug, Clone)]
 pub struct AsyncServer<ServiceT: AsyncService> {
-    _service: std::marker::PhantomData<ServiceT>,
+    service: ServiceT,
     config: ServerConfig,
 }
 
@@ -33,9 +33,9 @@ where
 {
     /// Creates a new `AsyncServer` instance with the provided server configuration.\
     /// The `ServerConfig` is used to configure the TLS settings for the server.
-    pub fn new(config: ServerConfig) -> Self {
+    pub fn new(service: ServiceT, config: ServerConfig) -> Self {
         Self {
-            _service: std::marker::PhantomData,
+            service,
             config,
         }
     }
@@ -64,10 +64,11 @@ where
         loop {
             let (stream, addr) = listener.accept().await?;
             let tls_acceptor = tls_acceptor.clone();
+            let service = self.service.clone();
             tokio::spawn(async move {
                 let tls_stream = tls_acceptor.accept(stream).await.unwrap();
                 let messages = Messages::new(tls_stream);
-                if let Err(e) = Self::handle_client(messages, addr).await {
+                if let Err(e) = Self::handle_client(service, messages, addr).await {
                     log::error!("Service error {}: {}", addr, e);
                 }
                 println!("- Client disconnected from {}", addr);
@@ -77,12 +78,12 @@ where
 
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
-    async fn handle_client(mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
+    async fn handle_client(service: ServiceT, mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
         let client = crate::shared::r#async::handshake_server(
             &mut messages,
             &[crate::shared::PROTOCOL_VERSION],
-            ServiceT::server_hello(),
-            ServiceT::auth_verifier(),
+            service.server_hello(),
+            service.auth_verifier(),
         )
         .await?;
         let os: client_hello::Os = client.os.try_into().unwrap_or(client_hello::Os::Unknown);
@@ -95,7 +96,6 @@ where
             addr.port()
         );
 
-        let service = ServiceT::new();
         service.main(messages).await?;
         Ok(())
     }
