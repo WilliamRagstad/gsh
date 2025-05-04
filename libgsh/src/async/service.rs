@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 /// A trait for an async service that can be run in a separate thread.
 /// The service is responsible for handling client events and sending frames to the client.
 #[async_trait]
-pub trait AsyncService: Send + Sync + 'static {
+pub trait AsyncService: Clone + Send + Sync + 'static {
     /// Initial window setting preferences for the service.\
     /// This is used in the `handshake_server` function to set the initial window settings for the client.
     /// This is optional and can be overridden by the service implementation.
