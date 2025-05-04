@@ -14,8 +14,12 @@ jobs:
         runs-on: ubuntu-latest
         steps:
         - uses: actions/checkout@v4
-        - name: Install protoc
-          run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        - name: Install dependencies
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y protobuf-compiler libpipewire-0.3-dev
+        - name: Set PKG_CONFIG_PATH environment variable
+          run: echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
         - name: Set PROTOC environment variable
           run: echo "PROTOC=$(which protoc)" >> $GITHUB_ENV
         - name: Build
