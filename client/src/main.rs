@@ -147,9 +147,10 @@ async fn main() {
         log::error!("Failed to parse frame format: {}", hello.format);
         exit(1);
     });
+    let compression = hello.compression;
     println!("Successfully connected to server!");
 
-    let mut client = match Client::new(sdl, video, format, messages) {
+    let mut client = match Client::new(sdl, video, format, compression, messages) {
         Ok(client) => client,
         Err(e) => {
             log::error!("Failed to create client: {}", e);

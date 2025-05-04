@@ -28,6 +28,7 @@ async-trait = "0.1.88"
 prost = "0.13.5"
 os_info = "3.10.0"
 sha2 = { version = "0.10.9", features = ["oid"] }
+zstd = { version = "0.13.3", features = ["zstdmt"] }
 
 [build-dependencies]
 prost-build = "0.13.5"
