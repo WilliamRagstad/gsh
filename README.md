@@ -37,7 +37,7 @@ All rendering and graphical elements are handled by the server, while the client
 
 ## Features
 
-- **Customizable**: Create *your own server application* and *interactive graphical experiences* using [`libgsh`](libgsh/README.md).
+- **Customizable**: Create your own interactive graphical experiences using [`libgsh`](libgsh/README.md).
 
 - **Cross-Platform**: Lightweight client application on `Linux`, `macOS`, and `Windows`.
 
