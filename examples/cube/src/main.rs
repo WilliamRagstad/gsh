@@ -46,7 +46,8 @@ async fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: AsyncServer<CubeService> = AsyncServer::new(config);
+    let service = CubeService::new();
+    let server: AsyncServer<CubeService> = AsyncServer::new(service, config);
     server.serve().await.unwrap();
 }
 
@@ -189,20 +190,11 @@ impl CubeService {
 
 #[async_trait]
 impl AsyncService for CubeService {
-    fn new() -> Self {
-        Self {
-            start: Instant::now(),
-            width: INITIAL_WIDTH,
-            height: INITIAL_HEIGHT,
-            // prev_frame: Vec::new(),
-        }
-    }
-
     async fn main(self, messages: Messages) -> Result<()> {
         <Self as AsyncServiceExt>::main(self, messages).await
     }
 
-    fn server_hello() -> ServerHelloAck {
+    fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: FrameFormat::Rgba.into(),
             windows: vec![WindowSettings {

@@ -22,23 +22,15 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<AuthService> = SimpleServer::new(config);
+    let service = AuthService {};
+    let server: SimpleServer<AuthService> = SimpleServer::new(service, config);
     server.serve().unwrap();
 }
 
 pub struct AuthService {}
 
 impl SimpleService for AuthService {
-    fn new() -> Self {
-        Self {}
-    }
-
-    fn main(self, messages: Messages) -> libgsh::Result<()> {
-        // We simply proxy to the `SimpleServiceExt` implementation.
-        <Self as SimpleServiceExt>::main(self, messages)
-    }
-
-    fn server_hello() -> ServerHelloAck {
+    fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: server_hello_ack::FrameFormat::Rgb.into(),
             windows: Vec::new(),
@@ -48,10 +40,15 @@ impl SimpleService for AuthService {
         }
     }
 
-    fn auth_verifier() -> Option<AuthVerifier> {
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
         Some(AuthVerifier::Password(Box::new(MyPasswordVerifier {
             password: "password".to_string(),
         })))
+    }
+
+    fn main(self, messages: Messages) -> libgsh::Result<()> {
+        // We simply proxy to the `SimpleServiceExt` implementation.
+        <Self as SimpleServiceExt>::main(self, messages)
     }
 }
 

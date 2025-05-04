@@ -28,23 +28,20 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<AuthService> = SimpleServer::new(config);
+    let service = AuthService {};
+    let server: SimpleServer<AuthService> = SimpleServer::new(service, config);
     server.serve().unwrap();
 }
 
 pub struct AuthService {}
 
 impl SimpleService for AuthService {
-    fn new() -> Self {
-        Self {}
-    }
-
     fn main(self, messages: Messages) -> libgsh::Result<()> {
         // We simply proxy to the `SimpleServiceExt` implementation.
         <Self as SimpleServiceExt>::main(self, messages)
     }
 
-    fn server_hello() -> ServerHelloAck {
+    fn server_hello(&self) -> ServerHelloAck {
         let mut sign_message = vec![0; 32];
         rand::rng().fill_bytes(&mut sign_message);
         ServerHelloAck {
@@ -54,7 +51,7 @@ impl SimpleService for AuthService {
         }
     }
 
-    fn auth_verifier() -> Option<AuthVerifier> {
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
         Some(AuthVerifier::Signature(Box::new(MySignatureVerifier::new(
             vec![cert::extract_public_key(include_str!("../example.pem"))
                 .expect("Failed to extract public key from PEM")],

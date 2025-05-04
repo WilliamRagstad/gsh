@@ -32,7 +32,8 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<ColorService> = SimpleServer::new(config);
+    let service = ColorService::default();
+    let server: SimpleServer<ColorService> = SimpleServer::new(service, config);
     server.serve().unwrap();
 }
 
@@ -89,20 +90,21 @@ impl ColorService {
     }
 }
 
-impl SimpleService for ColorService {
-    fn new() -> Self {
+impl Default for ColorService {
+    fn default() -> Self {
         Self {
             color: Color::default(),
             prev_frame: Vec::new(),
         }
     }
+}
 
-    fn main(self, messages: Messages) -> Result<()> {
-        // We simply proxy to the `SimpleServiceExt` implementation.
+impl SimpleService for ColorService {
+    fn main(self, messages: Messages) -> libgsh::Result<()> {
         <Self as SimpleServiceExt>::main(self, messages)
     }
 
-    fn server_hello() -> ServerHelloAck {
+    fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: FrameFormat::Rgba.into(),
             windows: vec![
