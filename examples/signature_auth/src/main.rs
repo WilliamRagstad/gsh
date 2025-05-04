@@ -28,12 +28,23 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server = SimpleServer::new(AuthService::default(), config);
+    let mut service = AuthService::default();
+    service.authorize_key(cert::extract_public_key(include_str!("../example.pem")).unwrap());
+    let server = SimpleServer::new(service, config);
     server.serve().unwrap();
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct AuthService {}
+pub struct AuthService {
+    // Any custom data you need for verification can be added here.
+    authorized_keys: Vec<RsaPublicKey>,
+}
+
+impl AuthService {
+    fn authorize_key(&mut self, key: RsaPublicKey) {
+        self.authorized_keys.push(key);
+    }
+}
 
 impl SimpleService for AuthService {
     fn main(self, messages: Messages) -> libgsh::Result<()> {
@@ -53,8 +64,7 @@ impl SimpleService for AuthService {
 
     fn auth_verifier(&self) -> Option<AuthVerifier> {
         Some(AuthVerifier::Signature(Box::new(MySignatureVerifier::new(
-            vec![cert::extract_public_key(include_str!("../example.pem"))
-                .expect("Failed to extract public key from PEM")],
+            self.authorized_keys.clone(),
         ))))
     }
 }
@@ -75,12 +85,6 @@ impl MySignatureVerifier {
 impl SignatureVerifier for MySignatureVerifier {
     fn verify(&self, public_key: &RsaPublicKey) -> bool {
         // Check if the public key is in the list of authorized keys.
-        let res = self.authorized_keys.iter().any(|key| *key == *public_key);
-        if res {
-            log::info!("Public key is authorized.");
-        } else {
-            log::warn!("Public key is not authorized.");
-        }
-        res
+        self.authorized_keys.iter().any(|key| *key == *public_key)
     }
 }

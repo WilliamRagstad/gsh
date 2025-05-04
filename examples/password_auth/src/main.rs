@@ -22,12 +22,21 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server = SimpleServer::new(AuthService::default(), config);
+    const PASSWORD: &str = "password";
+    let server = SimpleServer::new(AuthService::new(PASSWORD.to_string()), config);
     server.serve().unwrap();
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct AuthService {}
+#[derive(Debug, Clone)]
+pub struct AuthService {
+    password: String,
+}
+
+impl AuthService {
+    pub fn new(password: String) -> Self {
+        Self { password }
+    }
+}
 
 impl SimpleService for AuthService {
     fn server_hello(&self) -> ServerHelloAck {
@@ -42,7 +51,7 @@ impl SimpleService for AuthService {
 
     fn auth_verifier(&self) -> Option<AuthVerifier> {
         Some(AuthVerifier::Password(Box::new(MyPasswordVerifier {
-            password: "password".to_string(),
+            password: self.password.clone(),
         })))
     }
 
