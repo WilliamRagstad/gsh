@@ -5,7 +5,7 @@ It provides essential tools and abstractions to enable efficient communication b
 
 ## Quick Install
 
-Install the latest release of `libgsh` using `cargo`:
+Install the latest release of [`libgsh`](https://crates.io/crates/libgsh) using `cargo`:
 
 ```bash
 cargo install libgsh
