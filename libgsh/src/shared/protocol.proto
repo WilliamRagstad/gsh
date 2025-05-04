@@ -1,6 +1,8 @@
 syntax = "proto3";
 package protocol;
 
+import "google/protobuf/empty.proto";
+
 // Initial connection message from the client to the server
 // Client -> Server
 message ClientHello {
@@ -67,10 +69,9 @@ message ServerHelloAck {
 	repeated WindowSettings windows = 2;
 
 	oneof auth_method {
-		PasswordMethod password = 6; // Password-based authentication
+		google.protobuf.Empty password = 6; // Password-based authentication
 		SignatureMethod signature = 7; // Signature-based authentication
 	}
-	message PasswordMethod {}
 	message SignatureMethod {
 		bytes sign_message = 1; // Message to be signed for authentication
 	}
