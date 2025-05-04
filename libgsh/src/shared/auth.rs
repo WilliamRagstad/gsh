@@ -7,7 +7,13 @@ use rsa::{pkcs1v15::Signature, RsaPublicKey};
 /// This trait is used in the `handshake_client` function to send authentication information to the server.
 pub trait AuthProvider: Send + Sync + 'static {
     fn password(&mut self, host: &str) -> String;
+    fn password_success_cb(&mut self) {
+        log::debug!("Password authentication successful.");
+    }
     fn signature(&mut self, host: &str, sign_message: &[u8]) -> Option<(Signature, RsaPublicKey)>;
+    fn signature_success_cb(&mut self) {
+        log::debug!("Signature authentication successful.");
+    }
 }
 
 pub trait PasswordVerifier: Send + Sync + 'static {

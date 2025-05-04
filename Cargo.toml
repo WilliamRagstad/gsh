@@ -1,3 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["libgsh", "client", "examples/colors", "examples/cube"]
+members = [
+	"libgsh",
+	"client",
+	"examples/colors",
+	"examples/cube",
+	"examples/auth",
+]

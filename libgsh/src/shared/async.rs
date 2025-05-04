@@ -128,6 +128,12 @@ where
                 })),
             })
             .await?;
+        // Wait for ServerAuthAck message
+        let server_auth_ack = protocol::ServerAuthAck::decode(messages.read_message().await?)?;
+        if server_auth_ack.status != AuthStatus::Success as i32 {
+            return Err(HandshakeError::InvalidPassword);
+        }
+        auth_provider.password_success_cb();
     } else if let Some(server_hello_ack::AuthMethod::Signature(SignatureMethod { sign_message })) =
         &server_hello.auth_method
     {
@@ -145,6 +151,18 @@ where
                 })),
             })
             .await?;
+        // Wait for ServerAuthAck message
+        let server_auth_ack = protocol::ServerAuthAck::decode(messages.read_message().await?)?;
+        if server_auth_ack.status != AuthStatus::Success as i32 {
+            return Err(HandshakeError::SignatureInvalid);
+        }
+        auth_provider.signature_success_cb();
+    } else if server_hello.auth_method.is_none() {
+        log::debug!("No authentication method required by the server.");
+    } else {
+        return Err(HandshakeError::AnyError(
+            "Unsupported authentication method".into(),
+        ));
     }
 
     Ok(server_hello)

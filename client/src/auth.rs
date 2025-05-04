@@ -14,6 +14,8 @@ pub struct ClientAuthProvider {
     known_hosts: KnownHosts,
     id_files: IdFiles,
     id_override: Option<String>,
+    previous_host: Option<String>,
+    previous_password: Option<String>,
 }
 
 impl ClientAuthProvider {
@@ -22,6 +24,8 @@ impl ClientAuthProvider {
             known_hosts,
             id_files,
             id_override,
+            previous_password: None,
+            previous_host: None,
         }
     }
 }
@@ -38,6 +42,20 @@ impl AuthProvider for ClientAuthProvider {
             .with_prompt("Enter password")
             .interact()
             .unwrap();
+        self.previous_host = Some(host.to_string());
+        self.previous_password = Some(password.clone());
+        password
+    }
+
+    fn password_success_cb(&mut self) {
+        log::debug!("Password authentication successful.");
+        let (Some(previous_host), Some(previous_password)) =
+            (self.previous_host.take(), self.previous_password.take())
+        else {
+            log::warn!("No previous host or password found.");
+            return;
+        };
+        // As if the user wants to store the password, we should not call this function.
         // Store password in known hosts if user wants to
         let confirmation = Confirm::new()
             .with_prompt("Do you want to store this password?")
@@ -45,17 +63,19 @@ impl AuthProvider for ClientAuthProvider {
             .interact()
             .unwrap();
         if confirmation {
-            if let Some(known_host) = self.known_hosts.find_host_mut(host) {
-                known_host.password = Some(password.clone());
+            if let Some(known_host) = self.known_hosts.find_host_mut(&previous_host) {
+                known_host.password = Some(previous_password);
             } else {
                 // Add new host if it doesn't exist
-                self.known_hosts
-                    .add_host(host.to_string(), vec![], None, Some(password.clone()));
+                self.known_hosts.add_host(
+                    previous_host.to_string(),
+                    vec![],
+                    None,
+                    Some(previous_password.clone()),
+                );
             }
             self.known_hosts.save();
         }
-
-        password
     }
 
     fn signature(&mut self, host: &str, sign_message: &[u8]) -> Option<(Signature, RsaPublicKey)> {
