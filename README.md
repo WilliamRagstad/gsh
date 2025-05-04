@@ -16,6 +16,8 @@
 
 ## What is **Graphical Shell**?
 
+<img src="assets/graph.png" align="right" height="200px" alt="Architecture Diagram">
+
 It is a versatile framework designed to empower developers and enthusiasts to create custom graphical server interfaces, applications, services and experiences.
 Whether you're building a personal server, a graphical Bulletin Board System (BBS), or exploring new interactive experiences, Graphical Shell provides the tools to bring your ideas to life.
 
