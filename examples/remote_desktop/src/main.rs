@@ -1,4 +1,8 @@
-use std::{io::Write, time::Instant};
+use std::{
+    io::Write,
+    sync::{mpsc::Receiver, Arc, Mutex},
+    time::Instant,
+};
 
 use libgsh::{
     async_trait::async_trait,
@@ -19,11 +23,18 @@ use libgsh::{
 };
 use xcap::Monitor;
 
+#[derive(Debug, Clone)]
+pub struct XCapFrame {
+    pub width: u32,
+    pub height: u32,
+    pub raw: Vec<u8>,
+}
+
 const FRAME_FORMAT: FrameFormat = FrameFormat::Rgba;
 const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 const WINDOW_ID: u32 = 0;
-const INITIAL_WIDTH: usize = 1920;
-const INITIAL_HEIGHT: usize = 1080;
+const INITIAL_WIDTH: usize = 480;
+const INITIAL_HEIGHT: usize = 270;
 const MAX_FPS: u32 = 60;
 
 #[tokio::main]
@@ -40,19 +51,41 @@ async fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server = AsyncServer::new(RdpService::default(), config);
+
+    // Setup recorder
+    let monitor = Monitor::all()
+        .unwrap()
+        .into_iter()
+        .find(|m| m.is_primary().unwrap_or(false))
+        .unwrap_or_else(|| Monitor::from_point(0, 0).unwrap());
+    let (video_recorder, video_stream) = monitor
+        .video_recorder()
+        .expect("Failed to create video recorder");
+    video_recorder
+        .start()
+        .expect("Failed to start video recorder");
+
+    // Unsafe transmute to convert video_stream Recorder to XCapFrame reciever
+    // Ugly hack because `xcap::video_recorder::Frame` is not public.
+    let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
+    let recorder = Arc::new(Mutex::new(video_stream));
+
+    // Start service
+    let server = AsyncServer::new(RdpService::new(recorder), config);
     server.serve().await.unwrap();
 }
 
 #[derive(Debug, Clone)]
 pub struct RdpService {
     last_frame: Instant,
+    recorder: Arc<Mutex<Receiver<XCapFrame>>>,
 }
 
-impl Default for RdpService {
-    fn default() -> Self {
+impl RdpService {
+    fn new(recorder: Arc<Mutex<Receiver<XCapFrame>>>) -> Self {
         Self {
             last_frame: Instant::now(),
+            recorder,
         }
     }
 }
@@ -115,37 +148,33 @@ impl AsyncServiceExt for RdpService {
 
 impl RdpService {
     fn get_frame(&mut self) -> libgsh::Result<Frame> {
-        let monitor = Monitor::all()
-            .map_err(|e| ServiceError::Error(format!("{}", e)))?
-            .into_iter()
-            .find(|m| m.is_primary().unwrap_or(false))
-            .unwrap_or_else(|| Monitor::from_point(0, 0).unwrap());
+        let frame = {
+            let video_stream = self.recorder.lock().unwrap();
+            video_stream.recv().map_err(|e| {
+                ServiceError::Error(format!("Failed to receive frame from video stream: {}", e))
+            })?
+        };
 
-        let rgba_img = monitor
-            .capture_image()
-            .map_err(|e| ServiceError::Error(format!("{}", e)))?; // image::DynamicImage
-        let (w, h) = rgba_img.dimensions();
-        let rgba_vec = rgba_img.into_raw(); // Vec<u8>, len = w*h*4
         log::debug!(
             "Captured image of resolution {}x{} and size: {}",
-            w,
-            h,
-            rgba_vec.len()
+            frame.width,
+            frame.height,
+            frame.raw.len()
         );
-        let compressed = self.compress(&rgba_vec, w as usize, h as usize)?;
+        let compressed = self.compress(&frame.raw, frame.width as usize, frame.height as usize)?;
         log::debug!(
             "Compressed image size: {} (~{:.2}%)",
             compressed.len(),
-            compressed.len() as f32 * 100f32 / rgba_vec.len() as f32
+            compressed.len() as f32 * 100f32 / frame.raw.len() as f32
         );
         Ok(Frame {
             window_id: WINDOW_ID,
-            width: w,
-            height: h,
+            width: frame.width,
+            height: frame.height,
             segments: full_frame_segment(
                 &compressed,
-                w as usize,
-                h as usize,
+                frame.width as usize,
+                frame.height as usize,
                 // &mut self.previous_frame,
                 // 4,
             ),
