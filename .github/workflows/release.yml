@@ -14,8 +14,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-22.04, os_short: "linux", target: x86_64-unknown-linux-gnu, arch: "x64", exe: ""     }
-          - { os: windows-latest, os_short: "win",  target: x86_64-pc-windows-msvc  , arch: "x64", exe: ".exe" }
+          - { os: ubuntu-22.04, os_short: "linux", target: x86_64-unknown-linux-gnu, arch: "x64", exe: "", install_deps: "sudo apt-get update && sudo apt-get install -y protobuf-compiler libpipewire-0.3-dev libxcb1-dev" }
+          - { os: windows-latest, os_short: "win",  target: x86_64-pc-windows-msvc  , arch: "x64", exe: ".exe", install_deps: "" }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -33,6 +33,10 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install dependencies
+      if: matrix.install_deps != ''
+      run: ${{ matrix.install_deps }}
 
     - name: Build Client
       run: cargo build -p gsh --release --target ${{ matrix.target }}
