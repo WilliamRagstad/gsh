@@ -3,7 +3,7 @@ use libgsh::shared::{
     prost::{bytes::Bytes, Message},
     protocol::{
         self,
-        server_hello_ack::{window_settings::WindowMode, FrameFormat, WindowSettings},
+        server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
         status_update::{Details, StatusType},
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
@@ -21,6 +21,7 @@ use sdl2::{
 };
 use std::{
     collections::HashMap,
+    io::Read,
     time::{Duration, Instant},
 };
 
@@ -42,6 +43,7 @@ pub struct Client {
     sdl: sdl2::Sdl,
     video: sdl2::VideoSubsystem,
     format: FrameFormat,
+    compression: Option<protocol::server_hello_ack::Compression>,
     /// Mapping from SDL2 window ID to SDL2 canvas video::Window
     windows: HashMap<WindowID, SdlWindow>,
     /// Mapping from server ID to SDL2 window ID
@@ -55,6 +57,7 @@ impl Client {
         sdl: sdl2::Sdl,
         video: sdl2::VideoSubsystem,
         format: FrameFormat,
+        compression: Option<protocol::server_hello_ack::Compression>,
         messages: Messages,
     ) -> Result<Self> {
         // let sdl_context = sdl2::init().map_err(|e| anyhow!(e))?;
@@ -63,6 +66,7 @@ impl Client {
             sdl,
             video,
             format,
+            compression,
             windows: HashMap::new(),
             server_window_to_sdl_window: HashMap::new(),
             sdl_window_to_server_window: HashMap::new(),
@@ -511,6 +515,12 @@ impl Client {
             log::warn!("Received empty frame, skipping rendering.");
             return Ok(());
         }
+        log::debug!(
+            "Received frame of size {}x{} and {} segments",
+            frame.width,
+            frame.height,
+            frame.segments.len()
+        );
         let format = self.get_format();
         let pixel_bytes = self.bytes_per_pixel();
         let server_window_id = frame.window_id;
@@ -530,6 +540,21 @@ impl Client {
                     log::warn!("Received empty segment, skipping rendering.");
                     continue;
                 }
+                let pixel_data = if let Some(compression) = self.compression {
+                    match compression {
+                        server_hello_ack::Compression::Zstd(_zstd) => {
+                            let mut decoder =
+                                libgsh::zstd::stream::Decoder::new(&segment.data[..])?;
+                            let expected_len =
+                                segment.width as usize * segment.height as usize * pixel_bytes;
+                            let mut out = Vec::with_capacity(expected_len);
+                            decoder.read_to_end(&mut out)?;
+                            out
+                        }
+                    }
+                } else {
+                    segment.data.clone()
+                };
                 texture.update(
                     Some(Rect::new(
                         segment.x,
@@ -537,14 +562,15 @@ impl Client {
                         segment.width,
                         segment.height,
                     )),
-                    &segment.data,
-                    frame.width as usize * pixel_bytes,
+                    &pixel_data,
+                    segment.width as usize * pixel_bytes,
                 )?;
             }
             win.canvas
                 .copy(&texture, None, None)
                 .map_err(|e| anyhow!(e))?;
             win.canvas.present();
+            log::trace!("Updated window ID {}", server_window_id);
         } else {
             log::warn!(
                 "Server Window ID {} not found in mapping (not rendered)",

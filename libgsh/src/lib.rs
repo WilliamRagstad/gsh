@@ -16,24 +16,20 @@ pub use rsa;
 pub use sha2;
 pub use tokio;
 pub use tokio_rustls;
+pub use zstd;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("{0}")]
+    Error(String),
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
+    #[error(transparent)]
     RustlsError(#[from] tokio_rustls::rustls::Error),
+    #[error(transparent)]
     AnyError(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
     HandshakeError(#[from] shared::HandshakeError),
-}
-
-impl std::fmt::Display for ServiceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ServiceError::IoError(err) => write!(f, "IO error: {}", err),
-            ServiceError::RustlsError(err) => write!(f, "Rustls error: {}", err),
-            ServiceError::AnyError(err) => write!(f, "{}", err),
-            ServiceError::HandshakeError(err) => write!(f, "Handshake error: {}", err),
-        }
-    }
 }
 
 pub type Result<T> = std::result::Result<T, ServiceError>;

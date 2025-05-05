@@ -38,6 +38,12 @@ message ServerHelloAck {
 		RGBA = 1;
 	}
 	FrameFormat format = 1;
+	oneof compression {
+		ZstdCompression zstd = 2; // Zstandard compression
+	}
+	message ZstdCompression {
+		int32 level = 1; // Compression level (0-22)
+	}
 	// Window settings message, used to configure the window properties for the client.
 	message WindowSettings {
 		enum WindowMode {
@@ -66,11 +72,10 @@ message ServerHelloAck {
 		WindowAnchor frame_anchor = 10; // Anchor position of the frame image in the window
 	}
 	// List of initial window settings for the client
-	repeated WindowSettings windows = 2;
-
+	repeated WindowSettings windows = 3;
 	oneof auth_method {
-		google.protobuf.Empty password = 6; // Password-based authentication
-		SignatureMethod signature = 7; // Signature-based authentication
+		google.protobuf.Empty password = 4; // Password-based authentication
+		SignatureMethod signature = 5; // Signature-based authentication
 	}
 	message SignatureMethod {
 		bytes sign_message = 1; // Message to be signed for authentication

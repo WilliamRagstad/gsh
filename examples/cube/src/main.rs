@@ -208,6 +208,7 @@ impl AsyncService for CubeService {
     fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: FrameFormat::Rgba.into(),
+            compression: None,
             windows: vec![WindowSettings {
                 window_id: WINDOW_ID,
                 monitor_id: None,
