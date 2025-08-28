@@ -7,6 +7,7 @@
 pub mod r#async;
 pub mod cert;
 pub mod frame;
+pub mod quic;
 pub mod shared;
 pub mod simple;
 

@@ -1,0 +1,117 @@
+//! QUIC networking module for GSH protocol
+//!
+//! This module provides QUIC-based client and server implementations that work alongside
+//! the existing TCP+TLS implementations. QUIC provides built-in TLS 1.3 encryption and
+//! supports multiple streams for better performance.
+
+use std::sync::Arc;
+use std::net::SocketAddr;
+use anyhow::Result;
+use quinn::{ClientConfig, Endpoint, ServerConfig};
+use tokio_rustls::rustls;
+
+/// Client configuration for QUIC connections
+pub fn create_client_config(insecure: bool) -> Result<ClientConfig> {
+    let root_store = if insecure {
+        rustls::RootCertStore::empty()
+    } else {
+        // Use the same approach as the existing TLS code
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().certs {
+            let _ = roots.add(cert);
+        }
+        roots
+    };
+
+    let mut client_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    if insecure {
+        // Skip certificate verification for insecure connections
+        client_config.dangerous()
+            .set_certificate_verifier(Arc::new(SkipServerVerification));
+    }
+
+    let client_config = quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_config)?
+    ));
+    
+    Ok(client_config)
+}
+
+/// Server configuration for QUIC connections
+pub fn create_server_config(cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>, 
+                          private_key: rustls::pki_types::PrivateKeyDer<'static>) -> Result<ServerConfig> {
+    let server_config = quinn::ServerConfig::with_single_cert(
+        cert_chain, 
+        private_key
+    )?;
+    
+    Ok(server_config)
+}
+
+/// Create a QUIC endpoint for client connections
+pub async fn create_client_endpoint() -> Result<Endpoint> {
+    let endpoint = Endpoint::client("[::]:0".parse()?)?;
+    Ok(endpoint)
+}
+
+/// Create a QUIC endpoint for server connections
+pub async fn create_server_endpoint(addr: SocketAddr, server_config: ServerConfig) -> Result<Endpoint> {
+    let endpoint = Endpoint::server(server_config, addr)?;
+    Ok(endpoint)
+}
+
+/// Skip server certificate verification for insecure connections
+#[derive(Debug)]
+struct SkipServerVerification;
+
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA1,
+            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+        ]
+    }
+}

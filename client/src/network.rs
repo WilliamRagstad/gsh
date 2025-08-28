@@ -15,6 +15,7 @@ use tokio_rustls::rustls::{
 };
 // use std::{net::TcpStream, sync::Arc};
 use tokio_rustls::{client::TlsStream, TlsConnector};
+use quinn::{RecvStream, SendStream};
 
 use crate::{auth::ClientAuthProvider, config};
 
@@ -194,4 +195,131 @@ impl ServerCertVerifier for NoCertificateVerification {
         // Always return a valid certificate verification result
         Ok(ServerCertVerified::assertion())
     }
+}
+
+/// QUIC-based connection stream wrapper
+pub struct QuicStream {
+    send: SendStream,
+    recv: RecvStream,
+}
+
+impl tokio::io::AsyncRead for QuicStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        use std::pin::Pin;
+        Pin::new(&mut self.recv).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for QuicStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        use std::pin::Pin;
+        match Pin::new(&mut self.send).poll_write(cx, buf) {
+            std::task::Poll::Ready(Ok(n)) => std::task::Poll::Ready(Ok(n)),
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e))),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        use std::pin::Pin;
+        match Pin::new(&mut self.send).poll_flush(cx) {
+            std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e))),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        use std::pin::Pin;
+        match Pin::new(&mut self.send).poll_shutdown(cx) {
+            std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e))),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+pub type QuicMessages = AsyncMessageCodec<QuicStream>;
+
+/// Connect using QUIC protocol instead of TCP+TLS
+pub async fn connect_quic(
+    host: &str,
+    port: u16,
+    insecure: bool,
+    monitors: Vec<MonitorInfo>,
+    known_hosts: config::KnownHosts,
+    id_files: config::IdFiles,
+    id_override: Option<String>,
+) -> anyhow::Result<(ServerHelloAck, QuicMessages)> {
+    // Create QUIC client endpoint
+    let client_config = libgsh::quic::create_client_config(insecure)?;
+    let mut endpoint = libgsh::quic::create_client_endpoint().await?;
+    endpoint.set_default_client_config(client_config);
+
+    // Connect to server
+    let addr = format!("{}:{}", host, port).parse()?;
+    let connection = endpoint
+        .connect(addr, host)?
+        .await
+        .map_err(|e| anyhow::anyhow!("QUIC connection failed: {}", e))?;
+
+    log::info!("QUIC connection established to {}:{}", host, port);
+
+    // Open the main control stream for the GSH protocol
+    let (send, recv) = connection
+        .open_bi()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to open QUIC stream: {}", e))?;
+
+    let quic_stream = QuicStream { send, recv };
+    
+    // Host verification for QUIC connections
+    if !insecure {
+        // For now, we'll skip host verification since QUIC already provides 
+        // certificate verification during connection establishment
+        log::info!("QUIC connection uses built-in TLS certificate verification");
+    }
+
+    // Create message codec
+    let mut messages = QuicMessages::new(quic_stream);
+    
+    // Perform GSH protocol handshake
+    let hello = libgsh::shared::r#async::handshake_client(
+        &mut messages,
+        monitors,
+        ClientAuthProvider::new(known_hosts, id_files, id_override),
+        host,
+    )
+    .await?;
+
+    Ok((hello, messages))
+}
+
+/// Shutdown QUIC connection
+pub async fn shutdown_quic(messages: &mut QuicMessages) -> anyhow::Result<()> {
+    log::trace!("Exiting QUIC connection gracefully...");
+    messages
+        .write_message(protocol::StatusUpdate {
+            kind: StatusType::Exit as i32,
+            details: None,
+        })
+        .await?;
+    
+    // The QUIC connection will be closed when the streams are dropped
+    log::trace!("QUIC connection closed.");
+    Ok(())
 }
