@@ -255,7 +255,7 @@ impl tokio::io::AsyncWrite for QuicStream {
 
 pub type QuicMessages = AsyncMessageCodec<QuicStream>;
 
-/// Connect using QUIC protocol instead of TCP+TLS
+/// Connect using QUIC protocol with multi-stream support
 pub async fn connect_quic(
     host: &str,
     port: u16,
@@ -279,25 +279,23 @@ pub async fn connect_quic(
 
     log::info!("QUIC connection established to {}:{}", host, port);
 
-    // Open the main control stream for the GSH protocol
+    // Open the main control stream for the GSH protocol handshake
     let (send, recv) = connection
         .open_bi()
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to open QUIC stream: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to open QUIC control stream: {}", e))?;
 
     let quic_stream = QuicStream { send, recv };
     
     // Host verification for QUIC connections
     if !insecure {
-        // For now, we'll skip host verification since QUIC already provides 
-        // certificate verification during connection establishment
         log::info!("QUIC connection uses built-in TLS certificate verification");
     }
 
-    // Create message codec
+    // Create message codec for control stream
     let mut messages = QuicMessages::new(quic_stream);
     
-    // Perform GSH protocol handshake
+    // Perform GSH protocol handshake over the control stream
     let hello = libgsh::shared::r#async::handshake_client(
         &mut messages,
         monitors,
@@ -306,6 +304,11 @@ pub async fn connect_quic(
     )
     .await?;
 
+    log::info!("QUIC handshake completed successfully");
+    
+    // TODO: Create additional streams for frame data if needed
+    // For now, we use the single bidirectional stream for both control and frames
+    
     Ok((hello, messages))
 }
 

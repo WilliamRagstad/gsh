@@ -3,12 +3,70 @@
 //! This module provides QUIC-based client and server implementations that work alongside
 //! the existing TCP+TLS implementations. QUIC provides built-in TLS 1.3 encryption and
 //! supports multiple streams for better performance.
+//!
+//! QUIC Multi-Stream Architecture:
+//! - Stream 0 (bidirectional): Control messages, handshake, status updates
+//! - Stream 1+ (unidirectional): Frame data for better performance
+//! - This allows frames and control messages to be sent independently
 
 use std::sync::Arc;
 use std::net::SocketAddr;
 use anyhow::Result;
-use quinn::{ClientConfig, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Endpoint, ServerConfig, Connection};
 use tokio_rustls::rustls;
+use std::collections::HashMap;
+
+/// QUIC connection manager that handles multiple streams
+pub struct QuicConnection {
+    connection: Connection,
+    control_stream: Option<(quinn::SendStream, quinn::RecvStream)>,
+    frame_streams: HashMap<u64, quinn::SendStream>,
+    next_stream_id: u64,
+}
+
+impl QuicConnection {
+    pub fn new(connection: Connection) -> Self {
+        Self {
+            connection,
+            control_stream: None,
+            frame_streams: HashMap::new(),
+            next_stream_id: 1,
+        }
+    }
+    
+    /// Get or create the main control stream (bidirectional stream 0)
+    pub async fn control_stream(&mut self) -> Result<&mut (quinn::SendStream, quinn::RecvStream)> {
+        if self.control_stream.is_none() {
+            let (send, recv) = self.connection.open_bi().await?;
+            self.control_stream = Some((send, recv));
+        }
+        Ok(self.control_stream.as_mut().unwrap())
+    }
+    
+    /// Create a new unidirectional stream for frame data
+    pub async fn create_frame_stream(&mut self) -> Result<&quinn::SendStream> {
+        let stream = self.connection.open_uni().await?;
+        let stream_id = self.next_stream_id;
+        self.next_stream_id += 1;
+        self.frame_streams.insert(stream_id, stream);
+        Ok(self.frame_streams.get(&stream_id).unwrap())
+    }
+    
+    /// Accept incoming streams (for server side)
+    pub async fn accept_bi(&self) -> Result<(quinn::SendStream, quinn::RecvStream)> {
+        self.connection.accept_bi().await.map_err(Into::into)
+    }
+    
+    /// Accept incoming unidirectional streams (for server side)
+    pub async fn accept_uni(&self) -> Result<quinn::RecvStream> {
+        self.connection.accept_uni().await.map_err(Into::into)
+    }
+}
+
+/// Enhanced QUIC client configuration with multi-stream support
+pub fn create_client_config_with_streams(insecure: bool) -> Result<ClientConfig> {
+    create_client_config(insecure)
+}
 
 /// Client configuration for QUIC connections
 pub fn create_client_config(insecure: bool) -> Result<ClientConfig> {

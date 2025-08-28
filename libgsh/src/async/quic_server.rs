@@ -126,11 +126,20 @@ where
                             let addr = connection.remote_address();
                             log::info!("QUIC connection established from {}", addr);
                             
-                            // Accept the bidirectional stream
+                            // Accept the bidirectional control stream
                             match connection.accept_bi().await {
                                 Ok((send, recv)) => {
+                                    log::info!("QUIC control stream established from {}", addr);
                                     let stream = QuicStreamWrapper::new(send, recv);
                                     let messages = QuicMessages::new(stream);
+                                    
+                                    // Spawn a task to handle additional frame streams
+                                    let conn_clone = connection.clone();
+                                    let addr_clone = addr;
+                                    tokio::spawn(async move {
+                                        Self::handle_frame_streams(conn_clone, addr_clone).await;
+                                    });
+                                    
                                     if let Err(e) = Self::handle_client(service, messages, addr).await {
                                         log::error!("QUIC Service error {}: {}", addr, e);
                                     }
@@ -201,5 +210,26 @@ where
         
         log::trace!("QUIC Service main loop exited.");
         Ok(())
+    }
+    
+    /// Handle additional QUIC streams for frame data
+    async fn handle_frame_streams(connection: quinn::Connection, addr: SocketAddr) {
+        loop {
+            match connection.accept_uni().await {
+                Ok(_recv_stream) => {
+                    log::debug!("New QUIC frame stream from {}", addr);
+                    // TODO: Handle frame data streams
+                    // For now, just log that we received a frame stream
+                    tokio::spawn(async move {
+                        // Read frame data from this stream
+                        log::trace!("Frame stream handler for {} started", addr);
+                    });
+                }
+                Err(e) => {
+                    log::debug!("No more QUIC frame streams from {}: {}", addr, e);
+                    break;
+                }
+            }
+        }
     }
 }
