@@ -1,0 +1,35 @@
+[package]
+name = "gsh-benchmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bench]]
+name = "server_performance"
+harness = false
+
+[[bench]]
+name = "client_server_communication"
+harness = false
+
+[[bench]]
+name = "frame_processing"
+harness = false
+
+[[bench]]
+name = "authentication"
+harness = false
+
+[[bench]]
+name = "concurrent_load"
+harness = false
+
+[dependencies]
+libgsh = { path = "../libgsh" }
+criterion = { workspace = true }
+tokio-test = { workspace = true }
+tokio = { version = "1.47", features = ["full"] }
+env_logger = "0.11"
+log = "0.4"
+anyhow = "1.0"
+rand = "0.8"
