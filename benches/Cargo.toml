@@ -24,6 +24,10 @@ harness = false
 name = "concurrent_load"
 harness = false
 
+[[bench]]
+name = "integration_tests"
+harness = false
+
 [dependencies]
 libgsh = { path = "../libgsh" }
 criterion = { workspace = true }
