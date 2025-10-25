@@ -8,4 +8,9 @@ members = [
 	"examples/password_auth",
 	"examples/signature_auth",
 	"examples/remote_desktop",
+	"benches",
 ]
+
+[workspace.dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"

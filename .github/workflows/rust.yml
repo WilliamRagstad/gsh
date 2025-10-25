@@ -26,3 +26,18 @@ jobs:
           run: cargo build --verbose
         - name: Run tests
           run: cargo test --verbose
+        - name: Run benchmarks
+          run: |
+            # Run libgsh internal benchmarks (quick mode for CI)
+            cd libgsh && cargo bench -- --quick
+            # Run main benchmark suite (quick mode for CI) 
+            cd ../benches && cargo bench -- --quick
+        - name: Upload benchmark results
+          uses: actions/upload-artifact@v3
+          if: always()
+          with:
+            name: benchmark-results
+            path: |
+              target/criterion/
+              libgsh/target/criterion/
+              benches/target/criterion/
