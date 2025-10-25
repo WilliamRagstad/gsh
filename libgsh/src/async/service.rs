@@ -3,11 +3,12 @@ use crate::shared::{
     auth::AuthVerifier,
     prost::Message,
     protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
+    r#async::AsyncMessageCodec,
     ClientEvent,
 };
 use crate::Result;
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 /// A trait for an async service that can be run in a separate thread.
 /// The service is responsible for handling client events and sending frames to the client.
@@ -30,6 +31,46 @@ pub trait AsyncService: Clone + Send + Sync + 'static {
     async fn main(self, messages: Messages) -> Result<()>
     where
         Self: Sized;
+}
+
+/// A generic trait for async services that can work with any message codec type.
+/// This allows the same service to work with both TLS and QUIC streams.
+#[async_trait]
+pub trait AsyncServiceGeneric<S>: Clone + Send + Sync + 'static 
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    /// Initial window setting preferences for the service.
+    fn server_hello(&self) -> ServerHelloAck;
+
+    /// Auth verifier for the service.
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
+        None
+    }
+
+    /// Main event loop for the service.
+    async fn main(self, messages: AsyncMessageCodec<S>) -> Result<()>
+    where
+        Self: Sized;
+}
+
+/// Blanket implementation to make any AsyncService work as AsyncServiceGeneric with TLS streams
+#[async_trait]
+impl<T> AsyncServiceGeneric<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> for T
+where
+    T: AsyncService,
+{
+    fn server_hello(&self) -> ServerHelloAck {
+        AsyncService::server_hello(self)
+    }
+
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
+        AsyncService::auth_verifier(self)
+    }
+
+    async fn main(self, messages: AsyncMessageCodec<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>) -> Result<()> {
+        AsyncService::main(self, messages).await
+    }
 }
 
 /// A trait extension for `AsyncService` that provides additional default functionality:

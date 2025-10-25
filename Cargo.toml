@@ -8,4 +8,5 @@ members = [
 	"examples/password_auth",
 	"examples/signature_auth",
 	"examples/remote_desktop",
+	"examples/quic_demo",
 ]

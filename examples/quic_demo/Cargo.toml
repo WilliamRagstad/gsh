@@ -1,0 +1,17 @@
+[package]
+name = "quic_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libgsh = { path = "../../libgsh" }
+gsh = { path = "../../client" }
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-rustls = "0.26.2"
+async-trait = "0.1.88"
+env_logger = "0.11"
+anyhow = "1.0"
+
+[[bin]]
+name = "quic_client"
+path = "src/bin/quic_client.rs"

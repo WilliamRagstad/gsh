@@ -2,6 +2,7 @@ use crate::shared::r#async::AsyncMessageCodec;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 
+pub mod quic_server;
 pub mod server;
 pub mod service;
 
