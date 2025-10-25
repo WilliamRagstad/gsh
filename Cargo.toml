@@ -1,11 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-	"libgsh",
-	"client",
-	"examples/colors",
-	"examples/cube",
-	"examples/password_auth",
-	"examples/signature_auth",
-	"examples/remote_desktop",
-]
+members = ["libgsh", "client", "examples/*"]
+
+[workspace.dependencies]
+libgsh = { path = "libgsh" }
