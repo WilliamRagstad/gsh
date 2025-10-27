@@ -12,7 +12,7 @@ use libgsh::{
     shared::{
         protocol::{
             server_hello_ack::{window_settings, Compression, FrameFormat, WindowSettings, ZstdCompression},
-            user_input::{window_event::WindowAction, InputEvent},
+            user_input::{mouse_event::MouseAction, window_event::WindowAction, InputEvent},
             Frame, ServerHelloAck,
         },
         ClientEvent,
@@ -70,6 +70,8 @@ pub struct LiquidSimService {
     width: usize,
     height: usize,
     last_update: Instant,
+    mouse_pos: Option<Vec2>,
+    prev_mouse_pos: Option<Vec2>,
 }
 
 impl Default for LiquidSimService {
@@ -79,6 +81,8 @@ impl Default for LiquidSimService {
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
             last_update: Instant::now(),
+            mouse_pos: None,
+            prev_mouse_pos: None,
         }
     }
 }
@@ -174,6 +178,31 @@ impl LiquidSimService {
 
             particle.velocity += force * dt;
         });
+
+        // Apply mouse interaction forces
+        if let (Some(mouse_pos), Some(prev_mouse_pos)) = (self.mouse_pos, self.prev_mouse_pos) {
+            let mouse_velocity = (mouse_pos - prev_mouse_pos) / dt.max(0.001);
+            let mouse_influence_radius = 80.0;
+            let mouse_strength = 15000.0;
+
+            self.particles.par_iter_mut().for_each(|particle| {
+                let diff = particle.position - mouse_pos;
+                let dist_sq = diff.length_squared();
+
+                if dist_sq < mouse_influence_radius * mouse_influence_radius {
+                    let dist = dist_sq.sqrt();
+                    if dist > 0.1 {
+                        // Add velocity based on mouse movement
+                        particle.velocity += mouse_velocity * 0.5;
+                        
+                        // Add a push force away from mouse cursor
+                        let dir = diff / dist;
+                        let push_force = mouse_strength / (dist_sq + 100.0);
+                        particle.velocity += dir * push_force * dt;
+                    }
+                }
+            });
+        }
     }
 
     fn render_particles(&self) -> Vec<u8> {
@@ -330,6 +359,17 @@ impl AsyncServiceExt for LiquidSimService {
 
     async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = &event {
+            // Handle mouse events
+            if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
+                if mouse_event.action == MouseAction::Move as i32 && input.window_id == WINDOW_ID {
+                    // Update mouse position tracking
+                    self.prev_mouse_pos = self.mouse_pos;
+                    self.mouse_pos = Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
+                    log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
+                }
+            }
+            
+            // Handle window events
             if let Some(InputEvent::WindowEvent(window_event)) = input.input_event.as_ref() {
                 if window_event.action == WindowAction::Resize as i32 {
                     if input.window_id == WINDOW_ID {

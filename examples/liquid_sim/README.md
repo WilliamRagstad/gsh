@@ -12,9 +12,18 @@ This example showcases all the steps outlined in the issue:
    - Inter-particle forces
    - Wall collisions with damping
    - Simple fluid-like behavior
+   - **Interactive mouse control**: Move your mouse to push and influence particles in real-time!
 3. **📦 Direct Memory Access**: Direct access to pixel data in clean row-major format
 4. **💾 CPU Rendering**: Renders particles directly into RGBA8 image data
 5. **🚀 Compressed Transfer**: Compresses frames with Zstd before sending through GSH for bandwidth optimization
+
+## Interactive Controls
+
+- **Mouse Movement**: Move your mouse over the simulation window to interact with particles
+  - Particles within 80 pixels of the cursor are affected
+  - Mouse velocity is transferred to nearby particles
+  - Particles are gently pushed away from the cursor position
+  - Creates swirling, dynamic fluid motion as you move the mouse
 
 ## Technical Implementation
 
@@ -32,6 +41,7 @@ The simulation implements:
 - Velocity damping for realistic motion
 - Elastic collisions with boundaries
 - Repulsive forces between nearby particles (fluid-like behavior)
+- **Mouse interaction forces**: Real-time response to cursor movement
 - Velocity-based particle coloring (blue = slow, cyan/white = fast)
 
 ### Compression
@@ -84,13 +94,14 @@ gsh localhost
 - The simulation is intentionally simple to keep focus on the GSH integration
 - For GPU acceleration, the same pipeline concept applies but with wgpu for compute shaders
 - The example gracefully handles window resizing by reinitializing the simulation
+- Mouse interaction provides real-time control over particle behavior
 
 ## Future Enhancements
 
 Possible improvements:
 - Port to GPU with wgpu compute shaders for higher particle counts
 - Implement SPH (Smoothed Particle Hydrodynamics) for more realistic fluid behavior
-- Add user interaction (mouse/touch to disturb particles)
+- Add mouse click/drag for stronger interaction forces
 - Implement metaball rendering for smooth liquid surface
 - Add multiple fluid types with different properties
 - Optimize particle count with spatial hashing for O(n) neighbor search
