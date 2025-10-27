@@ -84,7 +84,6 @@ impl Default for LiquidSimService {
 }
 
 impl LiquidSimService {
-
     fn init_particles(count: usize, width: usize, height: usize) -> Vec<Particle> {
         use std::f32::consts::PI;
         let mut particles = Vec::with_capacity(count);
@@ -146,8 +145,10 @@ impl LiquidSimService {
             }
         });
 
-        // Compute inter-particle forces (simplified for performance)
-        // We'll use a simple n^2 approach but with spatial optimization
+        // Compute inter-particle forces
+        // Note: This is O(n²) which is intentionally simple for demonstration.
+        // For production with more particles, use spatial partitioning (grid/quadtree)
+        // or limit interaction distance more aggressively.
         let particles_clone = self.particles.clone();
         let influence_radius = 20.0;
         let repulsion_strength = 5000.0;
