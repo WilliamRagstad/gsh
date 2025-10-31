@@ -12,9 +12,9 @@ use libgsh::shared::{
         Frame, StatusUpdate, UserInput,
     },
 };
-use sdl2::{
+use sdl3::{
     event::{Event, WindowEvent},
-    pixels::PixelFormatEnum,
+    pixels::PixelFormat,
     rect::Rect,
     render::Canvas,
     video,
@@ -33,18 +33,18 @@ pub type WindowID = u32;
 
 pub struct SdlWindow {
     // pub server_window_id: WindowID,
-    // pub texture_creator: sdl2::render::TextureCreator<video::WindowContext>,
-    // pub current_texture: sdl2::render::Texture<'static>,
+    // pub texture_creator: sdl3::render::TextureCreator<video::WindowContext>,
+    // pub current_texture: sdl3::render::Texture<'static>,
     pub canvas: Canvas<video::Window>,
     // pub current_frame: Option<Frame>,
 }
 
 pub struct Client {
-    sdl: sdl2::Sdl,
-    video: sdl2::VideoSubsystem,
+    sdl: sdl3::Sdl,
+    video: sdl3::VideoSubsystem,
     format: FrameFormat,
     compression: Option<protocol::server_hello_ack::Compression>,
-    /// Mapping from SDL2 window ID to SDL2 canvas video::Window
+    /// Mapping from SDL window ID to SDL canvas video::Window
     windows: HashMap<WindowID, SdlWindow>,
     /// Mapping from server ID to SDL2 window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
@@ -54,13 +54,13 @@ pub struct Client {
 
 impl Client {
     pub fn new(
-        sdl: sdl2::Sdl,
-        video: sdl2::VideoSubsystem,
+        sdl: sdl3::Sdl,
+        video: sdl3::VideoSubsystem,
         format: FrameFormat,
         compression: Option<protocol::server_hello_ack::Compression>,
         messages: Messages,
     ) -> Result<Self> {
-        // let sdl_context = sdl2::init().map_err(|e| anyhow!(e))?;
+        // let sdl_context = sdl3::init().map_err(|e| anyhow!(e))?;
         // let video_subsystem = sdl_context.video().map_err(|e| anyhow!(e))?;
         Ok(Client {
             sdl,
@@ -81,13 +81,16 @@ impl Client {
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
         let mut window = self.video.window(&ws.title, ws.width, ws.height);
         if let Some(monitor_id) = ws.monitor_id {
-            let monitor = self
-                .video
-                .display_bounds(monitor_id as i32)
-                .map_err(|e| anyhow!(e))?;
-            let x = monitor.x() + ((monitor.width() as i32) - ws.width as i32) / 2;
-            let y = monitor.y() + ((monitor.height() as i32) - ws.height as i32) / 2;
-            window.position(x, y);
+            // SDL3 exposes displays() which returns a Vec<Display>; use it to get bounds
+            if let Ok(displays) = self.video.displays() {
+                if let Some(display) = displays.get(monitor_id as usize) {
+                    if let Ok(bounds) = display.get_bounds() {
+                        let x = bounds.x() + ((bounds.width() as i32) - ws.width as i32) / 2;
+                        let y = bounds.y() + ((bounds.height() as i32) - ws.height as i32) / 2;
+                        window.position(x, y);
+                    }
+                }
+            }
         } else {
             window.position_centered();
         }
@@ -103,7 +106,8 @@ impl Client {
         }
         let window = window.build().map_err(|e| anyhow!(e))?;
         let sdl_window_id = window.id();
-        let mut canvas = window.into_canvas().build().map_err(|e| anyhow!(e))?;
+        // SDL3's into_canvas API returns a Canvas directly
+        let mut canvas = window.into_canvas();
         self.server_window_to_sdl_window
             .insert(ws.window_id, sdl_window_id);
         self.sdl_window_to_server_window
@@ -148,10 +152,10 @@ impl Client {
         Ok(())
     }
 
-    fn get_format(&self) -> PixelFormatEnum {
+    fn get_format(&self) -> PixelFormat {
         match self.format {
-            FrameFormat::Rgba => PixelFormatEnum::RGBA32,
-            FrameFormat::Rgb => PixelFormatEnum::RGB24,
+            FrameFormat::Rgba => PixelFormat::RGBA32,
+            FrameFormat::Rgb => PixelFormat::RGB24,
         }
     }
 
@@ -166,8 +170,8 @@ impl Client {
         &mut self,
         window_id: WindowID,
         action: KeyAction,
-        keycode: sdl2::keyboard::Keycode,
-        keymod: sdl2::keyboard::Mod,
+        keycode: sdl3::keyboard::Keycode,
+        keymod: sdl3::keyboard::Mod,
     ) -> Result<()> {
         self.messages
             .write_message(UserInput {
@@ -178,7 +182,7 @@ impl Client {
                 kind: InputType::KeyEvent as i32,
                 input_event: Some(user_input::InputEvent::KeyEvent(user_input::KeyEvent {
                     action: action as i32,
-                    key_code: keycode.into_i32(),
+                    key_code: keycode as i32,
                     modifiers: keymod.bits() as u32,
                 })),
             })
@@ -191,20 +195,20 @@ impl Client {
         &mut self,
         window_id: WindowID,
         action: MouseAction,
-        button: Option<sdl2::mouse::MouseButton>,
+        button: Option<sdl3::mouse::MouseButton>,
         mouse_x: i32,
         mouse_y: i32,
         delta_x: f32,
         delta_y: f32,
     ) -> Result<()> {
         let button = match button {
-            Some(sdl2::mouse::MouseButton::Left) => {
+            Some(sdl3::mouse::MouseButton::Left) => {
                 user_input::mouse_event::MouseButton::Left as i32
             }
-            Some(sdl2::mouse::MouseButton::Middle) => {
+            Some(sdl3::mouse::MouseButton::Middle) => {
                 user_input::mouse_event::MouseButton::Middle as i32
             }
-            Some(sdl2::mouse::MouseButton::Right) => {
+            Some(sdl3::mouse::MouseButton::Right) => {
                 user_input::mouse_event::MouseButton::Right as i32
             }
             _ => 0,
@@ -267,39 +271,34 @@ impl Client {
                 return Ok(false);
             }
             Event::Window {
-                win_event: WindowEvent::Close,
+                win_event,
                 window_id,
                 ..
             } => {
-                self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
+                // SDL3's WindowEvent variants may differ; handle common ones and
+                // fall back to checking the debug string for Close-type events.
+                let we_debug = format!("{:?}", win_event);
+                if we_debug.contains("Close") {
+                    self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
+                        .await?;
+                    log::trace!("Window {} closed", window_id);
+                    self.destroy_window(window_id).await?;
+                } else if let WindowEvent::Resized(width, height) = win_event {
+                    self.window_event(
+                        window_id,
+                        WindowAction::Resize,
+                        0,
+                        0,
+                        width as u32,
+                        height as u32,
+                    )
                     .await?;
-                log::trace!("Window {} closed", window_id);
-                self.destroy_window(window_id).await?;
-            }
-            Event::Window {
-                win_event: WindowEvent::Resized(width, height),
-                window_id,
-                ..
-            } => {
-                self.window_event(
-                    window_id,
-                    WindowAction::Resize,
-                    0,
-                    0,
-                    width as u32,
-                    height as u32,
-                )
-                .await?;
-                log::trace!("Window {} resized to {}x{}", window_id, width, height);
-            }
-            Event::Window {
-                win_event: WindowEvent::Moved(x, y),
-                window_id,
-                ..
-            } => {
-                self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
-                    .await?;
-                log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                    log::trace!("Window {} resized to {}x{}", window_id, width, height);
+                } else if let WindowEvent::Moved(x, y) = win_event {
+                    self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
+                        .await?;
+                    log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                }
             }
             Event::KeyDown {
                 keycode: Some(keycode),
@@ -322,8 +321,16 @@ impl Client {
             Event::MouseMotion {
                 window_id, x, y, ..
             } => {
-                self.mouse_event(window_id, MouseAction::Move, None, x, y, 0.0, 0.0)
-                    .await?;
+                self.mouse_event(
+                    window_id,
+                    MouseAction::Move,
+                    None,
+                    x as i32,
+                    y as i32,
+                    0.0,
+                    0.0,
+                )
+                .await?;
                 log::trace!("Mouse moved in window {}: ({}, {})", window_id, x, y);
             }
             Event::MouseButtonDown {
@@ -337,8 +344,8 @@ impl Client {
                     window_id,
                     MouseAction::Press,
                     Some(mouse_btn),
-                    x,
-                    y,
+                    x as i32,
+                    y as i32,
                     0.0,
                     0.0,
                 )
@@ -361,8 +368,8 @@ impl Client {
                     window_id,
                     MouseAction::Release,
                     Some(mouse_btn),
-                    x,
-                    y,
+                    x as i32,
+                    y as i32,
                     0.0,
                     0.0,
                 )
@@ -375,29 +382,24 @@ impl Client {
                 );
             }
             Event::MouseWheel {
-                window_id,
-                direction: _direction,
-                precise_x,
-                precise_y,
-                mouse_x,
-                mouse_y,
-                ..
+                window_id, x, y, ..
             } => {
+                // SDL3 MouseWheel fields differ; use x/y as deltas. Position may not be available.
                 self.mouse_event(
                     window_id,
                     MouseAction::Scroll,
                     None,
-                    mouse_x,
-                    mouse_y,
-                    precise_x,
-                    precise_y,
+                    0,
+                    0,
+                    x as f32,
+                    y as f32,
                 )
                 .await?;
                 log::trace!(
-                    "Mouse wheel scrolled in window {}: ({}, {})",
+                    "Mouse wheel scrolled in window {}: delta=({}, {})",
                     window_id,
-                    mouse_x,
-                    mouse_y,
+                    x,
+                    y
                 );
             }
             _ => {

@@ -113,13 +113,13 @@ async fn main() {
         return;
     }
 
-    // Initialize SDL2
-    let sdl = sdl2::init().unwrap_or_else(|e| {
-        log::error!("Failed to initialize SDL2: {}", e);
+    // Initialize SDL3
+    let sdl = sdl3::init().unwrap_or_else(|e| {
+        log::error!("Failed to initialize SDL3: {}", e);
         exit(1);
     });
     let video = sdl.video().unwrap_or_else(|e| {
-        log::error!("Failed to initialize SDL2 video subsystem: {}", e);
+        log::error!("Failed to initialize SDL3 video subsystem: {}", e);
         exit(1);
     });
 
@@ -183,27 +183,27 @@ async fn main() {
     let _ = network::shutdown_tls(client.messages()).await;
 }
 
-fn monitor_info(video: &sdl2::VideoSubsystem) -> Vec<MonitorInfo> {
-    let displays = video.num_video_displays().unwrap_or(0);
+fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
-    for i in 0..displays {
-        if let Ok(bounds) = video.display_bounds(i) {
-            // x,y,w,h
-            if let Ok(mode) = video.desktop_display_mode(i) {
-                // refresh_rate, etc.
-                monitors.push(MonitorInfo {
-                    monitor_id: i as u32,
-                    x: bounds.x(),
-                    y: bounds.y(),
-                    width: bounds.width(),
-                    height: bounds.height(),
-                    refresh_hz: mode.refresh_rate as u32,
-                });
+    if let Ok(displays) = video.displays() {
+        for (i, display) in displays.iter().enumerate() {
+            // display.bounds() and display.desktop_mode() are SDL3 APIs exposed by the crate
+            if let Ok(bounds) = display.get_bounds() {
+                if let Ok(mode) = display.get_mode() {
+                    monitors.push(MonitorInfo {
+                        monitor_id: i as u32,
+                        x: bounds.x(),
+                        y: bounds.y(),
+                        width: bounds.width(),
+                        height: bounds.height(),
+                        refresh_hz: mode.refresh_rate as u32,
+                    });
+                } else {
+                    log::warn!("Failed to get display mode for monitor {}", i);
+                }
             } else {
-                log::warn!("Failed to get display mode for monitor {}", i);
+                log::warn!("Failed to get display bounds for monitor {}", i);
             }
-        } else {
-            log::warn!("Failed to get display bounds for monitor {}", i);
         }
     }
     monitors
