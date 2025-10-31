@@ -7,8 +7,8 @@ use tokio_rustls::rustls::pki_types::{pem::PemObject, PrivateKeyDer};
 
 // Generate a self-signed certificate
 pub fn self_signed<T: AsRef<str>>(
-    alt_names: &[T],
-) -> Result<(CertifiedKey, PrivateKeyDer), rcgen::Error> {
+    alt_names: &'_ [T],
+) -> Result<(CertifiedKey, PrivateKeyDer<'_>), rcgen::Error> {
     let subject_alt_names = alt_names
         .iter()
         .map(|name| name.as_ref().to_string())
