@@ -14,9 +14,9 @@ use libgsh::shared::{
 };
 use sdl3::{
     event::{Event, WindowEvent},
-    pixels::PixelFormat,
+    pixels::{Color, PixelFormat},
     rect::Rect,
-    render::Canvas,
+    render::{BlendMode, Canvas},
     video,
 };
 use std::{
@@ -536,6 +536,11 @@ impl Client {
             let texture_creator = win.canvas.texture_creator();
             let mut texture =
                 texture_creator.create_texture_target(format, frame.width, frame.height)?;
+            // Ensure the texture does not blend with the existing canvas contents.
+            let _ = texture.set_blend_mode(BlendMode::None);
+            // Clear the canvas first so previous frames don't persist beneath the new one.
+            win.canvas.set_draw_color(Color::BLACK);
+            win.canvas.clear();
             // Apply all segments of the frame to the window
             for segment in &frame.segments {
                 if segment.width == 0 || segment.height == 0 {
