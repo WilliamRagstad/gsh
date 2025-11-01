@@ -203,6 +203,8 @@ message UserInput {
 			PRESS = 1;
 			RELEASE = 2;
 			SCROLL = 3;
+			ENTER = 4; // Mouse entered the window
+			EXIT = 5;  // Mouse left/exited the window
 		}
 		MouseAction action = 1; // Action (move, click, scroll)
 		enum MouseButton {

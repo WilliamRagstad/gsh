@@ -194,11 +194,11 @@ impl LiquidSimService {
             if delta_len > 0.1 {
                 // Derive a velocity-like vector using frame dt so effect scales sensibly
                 let mouse_velocity = mouse_delta / dt.max(0.001);
-                log::trace!(
-                    "Mouse delta: {:.2}, velocity: {:.2}",
-                    delta_len,
-                    mouse_velocity.length()
-                );
+                // log::trace!(
+                //     "Mouse delta: {:.2}, velocity: {:.2}",
+                //     delta_len,
+                //     mouse_velocity.length()
+                // );
 
                 // Scale influence by how large the movement was
                 let mv = mouse_velocity * 0.6;
@@ -398,30 +398,47 @@ impl AsyncServiceExt for LiquidSimService {
     }
 
     async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
-        log::trace!("Got event: {:?}", event);
         if let ClientEvent::UserInput(input) = &event {
             // Handle mouse events
             if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
-                if mouse_event.action == MouseAction::Move as i32 && input.window_id == WINDOW_ID {
-                    // Update mouse position tracking
-                    self.prev_mouse_pos = self.mouse_pos;
-                    self.mouse_pos = Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
-                    log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
+                match MouseAction::try_from(mouse_event.action).unwrap() {
+                    MouseAction::Move if input.window_id == WINDOW_ID => {
+                        // Update mouse position tracking
+                        self.prev_mouse_pos = self.mouse_pos;
+                        self.mouse_pos =
+                            Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
+                        log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
+                    }
+                    MouseAction::Exit => {
+                        // Mouse exited the window
+                        self.prev_mouse_pos = self.mouse_pos;
+                        self.mouse_pos = None;
+                        log::trace!("Mouse exited window {}", input.window_id);
+                    }
+                    other => {
+                        log::warn!("Unhandled mouse action: {:?}", other);
+                    }
                 }
             }
 
             // Handle window events
             if let Some(InputEvent::WindowEvent(window_event)) = input.input_event.as_ref() {
-                if window_event.action == WindowAction::Resize as i32 {
-                    if input.window_id == WINDOW_ID {
-                        let new_width = window_event.width as usize;
-                        let new_height = window_event.height as usize;
-                        log::info!("Resizing to {}x{}", new_width, new_height);
-                        self.resize(new_width, new_height);
-                        self.send_frame(messages).await?;
+                match WindowAction::try_from(window_event.action).unwrap() {
+                    WindowAction::Resize => {
+                        if input.window_id == WINDOW_ID {
+                            let new_width = window_event.width as usize;
+                            let new_height = window_event.height as usize;
+                            log::info!("Resizing to {}x{}", new_width, new_height);
+                            self.resize(new_width, new_height);
+                            self.send_frame(messages).await?;
+                        }
                     }
-                } else if window_event.action == WindowAction::Close as i32 {
-                    return Err(ServiceError::AnyError("Window closed".into()));
+                    WindowAction::Close => {
+                        return Err(ServiceError::AnyError("Window closed".into()));
+                    }
+                    other => {
+                        log::warn!("Unhandled window action: {:?}", other);
+                    }
                 }
             }
         }

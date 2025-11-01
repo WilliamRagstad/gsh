@@ -313,8 +313,7 @@ impl Client {
             } => {
                 // SDL3's WindowEvent variants may differ; handle common ones and
                 // fall back to checking the debug string for Close-type events.
-                let we_debug = format!("{:?}", win_event);
-                if we_debug.contains("Close") {
+                if win_event == WindowEvent::CloseRequested {
                     self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
                         .await?;
                     log::trace!("Window {} closed", window_id);
@@ -334,6 +333,16 @@ impl Client {
                     self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
                         .await?;
                     log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                } else if win_event == WindowEvent::MouseEnter {
+                    // Mouse entered the window (fallback via debug string)
+                    self.mouse_event(window_id, MouseAction::Enter, None, 0, 0, 0.0, 0.0)
+                        .await?;
+                    log::trace!("Mouse entered window {}", window_id);
+                } else if win_event == WindowEvent::MouseLeave {
+                    // Mouse left the window (fallback via debug string)
+                    self.mouse_event(window_id, MouseAction::Exit, None, 0, 0, 0.0, 0.0)
+                        .await?;
+                    log::trace!("Mouse left window {}", window_id);
                 }
             }
             Event::KeyDown {
