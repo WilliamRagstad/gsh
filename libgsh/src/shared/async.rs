@@ -54,7 +54,7 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
 
     /// Reads a whole length-value encoded message from the underlying reader.
     /// Returns the message bytes as a `Vec<u8>`.
-    async fn read_message_internal(&mut self) -> std::io::Result<prost::bytes::Bytes> {
+    async fn read_internal(&mut self) -> std::io::Result<prost::bytes::Bytes> {
         let read_timeout = Duration::from_millis(10); // Set a 10-second timeout
 
         if !self.partial_read {
@@ -77,16 +77,16 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
     }
 
     #[cfg(feature = "client")]
-    pub async fn read_message(&mut self) -> std::io::Result<protocol::server_message::ServerEvent> {
-        let x = self.read_message_internal().await?;
+    pub async fn read_event(&mut self) -> std::io::Result<protocol::server_message::ServerEvent> {
+        let x = self.read_internal().await?;
         Ok(protocol::ServerMessage::decode(x)?
             .server_event
             .expect("ServerEvent is required"))
     }
 
     #[cfg(not(feature = "client"))]
-    pub async fn read_message(&mut self) -> std::io::Result<protocol::client_message::ClientEvent> {
-        let x = self.read_message_internal().await?;
+    pub async fn read_event(&mut self) -> std::io::Result<protocol::client_message::ClientEvent> {
+        let x = self.read_internal().await?;
         Ok(protocol::ClientMessage::decode(x)?
             .client_event
             .expect("ClientEvent is required"))
@@ -94,7 +94,7 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
 
     /// Writes a length-value encoded message to the underlying writer.
     #[inline]
-    async fn write_message_internal<T: Message>(&mut self, message: T) -> std::io::Result<()> {
+    async fn write_internal<T: Message>(&mut self, message: T) -> std::io::Result<()> {
         let message = message.encode_to_vec();
         let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
         let length = message.len() as LengthType;
@@ -108,19 +108,19 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
     }
 
     #[cfg(feature = "client")]
-    pub async fn write_message(
+    pub async fn write_event(
         &mut self,
         message: impl Into<protocol::ClientMessage>,
     ) -> std::io::Result<()> {
-        self.write_message_internal(message.into()).await
+        self.write_internal(message.into()).await
     }
 
     #[cfg(not(feature = "client"))]
-    pub async fn write_message(
+    pub async fn write_event(
         &mut self,
         message: impl Into<protocol::ServerMessage>,
     ) -> std::io::Result<()> {
-        self.write_message_internal(message.into()).await
+        self.write_internal(message.into()).await
     }
 }
 
@@ -148,14 +148,14 @@ where
     } as i32;
     let os_version = os_info::get().version().to_string();
     messages
-        .write_message(protocol::ClientHello {
+        .write_event(protocol::ClientHello {
             protocol_version: PROTOCOL_VERSION,
             os,
             os_version,
             monitors,
         })
         .await?;
-    let ServerEvent::ServerHelloAck(server_hello) = messages.read_message().await? else {
+    let ServerEvent::ServerHelloAck(server_hello) = messages.read_event().await? else {
         return Err(HandshakeError::AnyError(
             "Expected ServerHelloAck message".into(),
         ));
@@ -164,14 +164,14 @@ where
     // Send ClientAuth message if auth_method is set
     if let Some(server_hello_ack::AuthMethod::Password(_)) = server_hello.auth_method {
         messages
-            .write_message(protocol::ClientAuth {
+            .write_event(protocol::ClientAuth {
                 auth_data: Some(client_auth::AuthData::Password(client_auth::Password {
                     password: auth_provider.password(host),
                 })),
             })
             .await?;
         // Wait for ServerAuthAck message
-        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_message().await? else {
+        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_event().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ServerAuthAck message".into(),
             ));
@@ -190,7 +190,7 @@ where
         let public_key_pem_bytes = public_key_pem.as_bytes().to_vec();
         let signature_bytes = signature.to_bytes().to_vec();
         messages
-            .write_message(protocol::ClientAuth {
+            .write_event(protocol::ClientAuth {
                 auth_data: Some(client_auth::AuthData::Signature(client_auth::Signature {
                     signature: signature_bytes,
                     public_key: public_key_pem_bytes,
@@ -198,7 +198,7 @@ where
             })
             .await?;
         // Wait for ServerAuthAck message
-        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_message().await? else {
+        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_event().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ServerAuthAck message".into(),
             ));
@@ -234,7 +234,7 @@ where
     use crate::shared::protocol::client_message::ClientEvent;
 
     let auth_method = server_hello.auth_method.clone();
-    let ClientEvent::ClientHello(client_hello) = messages.read_message().await? else {
+    let ClientEvent::ClientHello(client_hello) = messages.read_event().await? else {
         return Err(HandshakeError::AnyError(
             "Expected ClientHello message".into(),
         ));
@@ -245,18 +245,18 @@ where
             client_hello.protocol_version, supported_protocol_versions
         );
         messages
-            .write_message(protocol::StatusUpdate {
+            .write_event(protocol::StatusUpdate {
                 kind: StatusType::Exit as i32,
                 details: None,
             })
             .await?;
         return Err(HandshakeError::AnyError(msg.into()));
     }
-    messages.write_message(server_hello).await?;
+    messages.write_event(server_hello).await?;
 
     // Verify ClientAuth message if auth_method is set
     if let Some(AuthMethod::Password(_)) = auth_method {
-        let ClientEvent::ClientAuth(client_auth) = messages.read_message().await? else {
+        let ClientEvent::ClientAuth(client_auth) = messages.read_event().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ClientAuth message".into(),
             ));
@@ -271,7 +271,7 @@ where
         };
         if client_auth.password.is_empty() {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Failure as i32,
                     message: "Password is required".to_string(),
                 })
@@ -280,7 +280,7 @@ where
         }
         if !password_verifier.verify(&client_auth.password) {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Failure as i32,
                     message: "Invalid password".to_string(),
                 })
@@ -288,7 +288,7 @@ where
             return Err(HandshakeError::InvalidPassword);
         } else {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Success as i32,
                     message: "Password verified".to_string(),
                 })
@@ -297,7 +297,7 @@ where
     } else if let Some(AuthMethod::Signature(server_auth)) = auth_method {
         use crate::shared::protocol::{client_message::ClientEvent, server_message::ServerEvent};
 
-        let ClientEvent::ClientAuth(client_auth) = messages.read_message().await? else {
+        let ClientEvent::ClientAuth(client_auth) = messages.read_event().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ClientAuth message".into(),
             ));
@@ -312,7 +312,7 @@ where
         };
         if client_auth.signature.is_empty() {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Failure as i32,
                     message: "Signature is required".to_string(),
                 })
@@ -324,7 +324,7 @@ where
             Ok(public_key) => public_key,
             Err(err) => {
                 messages
-                    .write_message(protocol::ServerAuthAck {
+                    .write_event(protocol::ServerAuthAck {
                         status: AuthStatus::Failure as i32,
                         message: format!("Invalid public key: {}", err),
                     })
@@ -336,7 +336,7 @@ where
             Ok(signature) => signature,
             Err(err) => {
                 messages
-                    .write_message(protocol::ServerAuthAck {
+                    .write_event(protocol::ServerAuthAck {
                         status: AuthStatus::Failure as i32,
                         message: format!("Invalid signature: {}", err),
                     })
@@ -347,7 +347,7 @@ where
 
         if !signature_verifier.verify(&public_key) {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Failure as i32,
                     message: "Verification failed".to_string(),
                 })
@@ -356,7 +356,7 @@ where
         }
         if !verify_signature(&server_auth.sign_message, signature, public_key) {
             messages
-                .write_message(protocol::ServerAuthAck {
+                .write_event(protocol::ServerAuthAck {
                     status: AuthStatus::Failure as i32,
                     message: "Verification failed".to_string(),
                 })
@@ -364,7 +364,7 @@ where
             return Err(HandshakeError::SignatureInvalid);
         }
         messages
-            .write_message(protocol::ServerAuthAck {
+            .write_event(protocol::ServerAuthAck {
                 status: AuthStatus::Success as i32,
                 message: "Signature verified!".to_string(),
             })

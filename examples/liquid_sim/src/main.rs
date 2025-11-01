@@ -336,7 +336,7 @@ impl LiquidSimService {
         );
 
         messages
-            .write_message(Frame {
+            .write_event(Frame {
                 window_id: WINDOW_ID,
                 segments: full_frame_segment(&compressed, self.width, self.height),
                 width: self.width as u32,

@@ -1,11 +1,7 @@
 use super::Messages;
 use crate::shared::{
     auth::AuthVerifier,
-    prost::Message,
-    protocol::{
-        client_message::ClientEvent, status_update::StatusType, ServerHelloAck, StatusUpdate,
-        UserInput,
-    },
+    protocol::{client_message::ClientEvent, status_update::StatusType, ServerHelloAck},
 };
 use crate::Result;
 use async_trait::async_trait;
@@ -83,7 +79,7 @@ pub trait AsyncServiceExt: AsyncService {
         'running: loop {
             // Read messages from the client connection
             // This is a non-blocking call, so it will return immediately even if no data is available
-            match messages.read_message().await {
+            match messages.read_event().await {
                 Ok(ClientEvent::StatusUpdate(status_update)) => {
                     if status_update.kind == StatusType::Exit as i32 {
                         log::trace!("Client gracefully disconnected!");

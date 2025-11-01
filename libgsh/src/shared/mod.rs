@@ -2,8 +2,6 @@ pub mod r#async;
 pub mod auth;
 pub mod sync;
 
-pub use prost;
-
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
 }

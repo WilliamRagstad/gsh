@@ -71,7 +71,7 @@ impl CubeService {
     async fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
         let frame = self.draw_cube(4);
         messages
-            .write_message(Frame {
+            .write_event(Frame {
                 window_id: WINDOW_ID,
                 segments: full_frame_segment(
                     &frame,

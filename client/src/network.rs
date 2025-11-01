@@ -25,7 +25,7 @@ pub async fn shutdown_tls(messages: &mut Messages) -> anyhow::Result<()> {
     log::trace!("Exiting gracefully...");
     messages.get_stream().get_mut().1.send_close_notify();
     messages
-        .write_message(protocol::StatusUpdate {
+        .write_event(protocol::StatusUpdate {
             kind: StatusType::Exit as i32,
             details: None,
         })

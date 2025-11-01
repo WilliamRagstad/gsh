@@ -57,7 +57,7 @@ impl ColorService {
             frame[i * PIXEL_BYTES + 2] = color.2; // Blue
             frame[i * PIXEL_BYTES + 3] = 255;
         }
-        messages.write_message(Frame {
+        messages.write_event(Frame {
             window_id,
             // data: frame.to_vec(),
             segments: optimize_segments(

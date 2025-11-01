@@ -1,11 +1,7 @@
 use super::Messages;
 use crate::shared::{
     auth::AuthVerifier,
-    prost::Message,
-    protocol::{
-        client_message::ClientEvent, status_update::StatusType, ServerHelloAck, StatusUpdate,
-        UserInput,
-    },
+    protocol::{client_message::ClientEvent, status_update::StatusType, ServerHelloAck},
 };
 use crate::{Result, ServiceError};
 use std::io::Write;
@@ -40,7 +36,7 @@ pub trait SimpleService: Clone + Send + Sync + 'static {
 pub trait SimpleServiceExt: SimpleService {
     const MAX_FPS: u32 = 60;
     const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
-    /// Startup function for the service.\
+    /// Start up function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
     fn on_startup(&mut self, _messages: &mut Messages) -> Result<()> {
         Ok(())
@@ -84,33 +80,34 @@ pub trait SimpleServiceExt: SimpleService {
         'running: loop {
             // Read messages from the client connection
             // This is a non-blocking call, so it will return immediately even if no data is available
-            match messages.read_message() {
-                Ok(buf) => {
-                    if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
-                        if status_update.kind == StatusType::Exit as i32 {
-                            log::trace!("Client gracefully disconnected!");
-                            messages.get_stream().conn.send_close_notify();
-                            let _ = messages.get_stream().flush();
-                            let _ = messages
-                                .get_stream()
-                                .sock
-                                .shutdown(std::net::Shutdown::Both);
-                            allow_wouldblock(self.on_exit(&mut messages))?;
-                            drop(messages);
-                            break 'running;
-                        }
-                        allow_wouldblock(
-                            self.on_event(&mut messages, ClientEvent::StatusUpdate(status_update)),
-                        )?;
-                    } else if let Ok(user_input) = UserInput::decode(&buf[..]) {
-                        allow_wouldblock(
-                            self.on_event(&mut messages, ClientEvent::UserInput(user_input)),
-                        )?;
-                    } else {
-                        log::trace!("Received data: {:?}", &buf[..]);
-                        log::trace!("Unknown message type, ignoring...");
+            match messages.read_event() {
+                Ok(ClientEvent::StatusUpdate(status_update)) => {
+                    if status_update.kind == StatusType::Exit as i32 {
+                        log::trace!("Client gracefully disconnected!");
+                        messages.get_stream().conn.send_close_notify();
+                        let _ = messages.get_stream().flush();
+                        let _ = messages
+                            .get_stream()
+                            .sock
+                            .shutdown(std::net::Shutdown::Both);
+                        allow_wouldblock(self.on_exit(&mut messages))?;
+                        drop(messages);
+                        break 'running;
                     }
+                    allow_wouldblock(
+                        self.on_event(&mut messages, ClientEvent::StatusUpdate(status_update)),
+                    )?;
                 }
+                Ok(ClientEvent::UserInput(user_input)) => {
+                    allow_wouldblock(
+                        self.on_event(&mut messages, ClientEvent::UserInput(user_input)),
+                    )?;
+                }
+                Ok(other) => {
+                    log::trace!("Received data: {:?}", &other);
+                    log::trace!("Unknown message type, ignoring...");
+                }
+
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::UnexpectedEof
                     | std::io::ErrorKind::ConnectionAborted

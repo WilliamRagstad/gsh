@@ -1,17 +1,13 @@
 use anyhow::{anyhow, Result};
-use libgsh::shared::{
-    prost::{bytes::Bytes, Message},
-    protocol::{
-        self,
-        server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
-        server_message::ServerEvent,
-        status_update::{Details, StatusType},
-        user_input::{
-            self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
-            InputType,
-        },
-        Frame, StatusUpdate, UserInput,
+use libgsh::shared::protocol::{
+    self,
+    server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
+    server_message::ServerEvent,
+    status_update::{Details, StatusType},
+    user_input::{
+        self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction, InputType,
     },
+    Frame, StatusUpdate, UserInput,
 };
 use sdl3::{
     event::{Event, WindowEvent},
@@ -132,7 +128,7 @@ impl Client {
                 // Remove reverse mapping
                 self.server_window_to_sdl_window.remove(&server_window_id);
                 self.messages
-                    .write_message(protocol::UserInput {
+                    .write_event(protocol::UserInput {
                         window_id: server_window_id,
                         kind: protocol::user_input::InputType::WindowEvent as i32,
                         input_event: Some(protocol::user_input::InputEvent::WindowEvent(
@@ -154,7 +150,7 @@ impl Client {
             } else {
                 // Fallback: send to window 0 if no mapping exists
                 self.messages
-                    .write_message(protocol::UserInput {
+                    .write_event(protocol::UserInput {
                         window_id: 0,
                         kind: protocol::user_input::InputType::WindowEvent as i32,
                         input_event: Some(protocol::user_input::InputEvent::WindowEvent(
@@ -198,7 +194,7 @@ impl Client {
         keymod: sdl3::keyboard::Mod,
     ) -> Result<()> {
         self.messages
-            .write_message(UserInput {
+            .write_event(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -253,7 +249,7 @@ impl Client {
             delta_y
         );
         self.messages
-            .write_message(UserInput {
+            .write_event(UserInput {
                 window_id: server_window_id,
                 kind: InputType::MouseEvent as i32,
                 input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
@@ -279,7 +275,7 @@ impl Client {
         height: u32,
     ) -> Result<()> {
         self.messages
-            .write_message(UserInput {
+            .write_event(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -459,7 +455,7 @@ impl Client {
         let mut last_frame_time = Instant::now();
         'running: loop {
             // Read messages from the server
-            match self.messages.read_message().await {
+            match self.messages.read_event().await {
                 Ok(event) => {
                     if !self.handle_server_event(event).await? {
                         break 'running;

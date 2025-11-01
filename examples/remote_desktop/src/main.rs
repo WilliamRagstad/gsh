@@ -132,7 +132,7 @@ impl AsyncServiceExt for RdpService {
 
     async fn on_tick(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
-            messages.write_message(self.get_frame()?).await?;
+            messages.write_event(self.get_frame()?).await?;
             self.last_frame = std::time::Instant::now();
             log::debug!("Sent frame");
         }
@@ -140,7 +140,7 @@ impl AsyncServiceExt for RdpService {
     }
 
     async fn on_startup(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
-        messages.write_message(self.get_frame()?).await?;
+        messages.write_event(self.get_frame()?).await?;
         log::debug!("Sent initial frame");
         Ok(())
     }
