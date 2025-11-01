@@ -62,7 +62,8 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+    // Show info logs by default so input events are visible during interactive use
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_timestamp(None)
         .init();
@@ -179,7 +180,7 @@ async fn main() {
         log::error!("Client error: {}", e);
         exit(1);
     }
-
+    log::info!("Shutting down client...");
     let _ = network::shutdown_tls(client.messages()).await;
 }
 

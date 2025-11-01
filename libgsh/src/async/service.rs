@@ -2,8 +2,10 @@ use super::Messages;
 use crate::shared::{
     auth::AuthVerifier,
     prost::Message,
-    protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
-    ClientEvent,
+    protocol::{
+        client_message::ClientEvent, status_update::StatusType, ServerHelloAck, StatusUpdate,
+        UserInput,
+    },
 };
 use crate::Result;
 use async_trait::async_trait;
@@ -41,7 +43,7 @@ pub trait AsyncService: Clone + Send + Sync + 'static {
 pub trait AsyncServiceExt: AsyncService {
     const MAX_FPS: u32 = 60;
     const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
-    /// Startup function for the service.\
+    /// Start up function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
     async fn on_startup(&mut self, _messages: &mut Messages) -> Result<()> {
         Ok(())
@@ -82,26 +84,26 @@ pub trait AsyncServiceExt: AsyncService {
             // Read messages from the client connection
             // This is a non-blocking call, so it will return immediately even if no data is available
             match messages.read_message().await {
-                Ok(buf) => {
-                    if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
-                        if status_update.kind == StatusType::Exit as i32 {
-                            log::trace!("Client gracefully disconnected!");
-                            messages.get_stream().get_mut().1.send_close_notify();
-                            let _ = messages.get_stream().get_mut().0.flush().await;
-                            let _ = messages.get_stream().get_mut().0.shutdown().await;
-                            self.on_exit(&mut messages).await?;
-                            drop(messages);
-                            break 'running;
-                        }
-                        self.on_event(&mut messages, ClientEvent::StatusUpdate(status_update))
-                            .await?;
-                    } else if let Ok(user_input) = UserInput::decode(&buf[..]) {
-                        self.on_event(&mut messages, ClientEvent::UserInput(user_input))
-                            .await?;
-                    } else {
-                        log::trace!("Received data: {:?}", &buf[..]);
-                        log::trace!("Unknown message type, ignoring...");
+                Ok(ClientEvent::StatusUpdate(status_update)) => {
+                    if status_update.kind == StatusType::Exit as i32 {
+                        log::trace!("Client gracefully disconnected!");
+                        messages.get_stream().get_mut().1.send_close_notify();
+                        let _ = messages.get_stream().get_mut().0.flush().await;
+                        let _ = messages.get_stream().get_mut().0.shutdown().await;
+                        self.on_exit(&mut messages).await?;
+                        drop(messages);
+                        break 'running;
                     }
+                    self.on_event(&mut messages, ClientEvent::StatusUpdate(status_update))
+                        .await?;
+                }
+                Ok(ClientEvent::UserInput(user_input)) => {
+                    self.on_event(&mut messages, ClientEvent::UserInput(user_input))
+                        .await?;
+                }
+                Ok(other) => {
+                    log::trace!("Received data: {:?}", &other);
+                    log::trace!("Unknown message type, ignoring...");
                 }
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::UnexpectedEof

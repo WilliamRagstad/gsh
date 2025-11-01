@@ -1,3 +1,16 @@
+#![allow(unused_imports)]
+use std::any::type_name;
+
+use super::{
+    auth::{AuthProvider, AuthVerifier},
+    protocol::{
+        client_auth::{self, AuthData},
+        server_auth_ack::AuthStatus,
+        server_hello_ack::{self, AuthMethod, SignatureMethod},
+        status_update::StatusType,
+    },
+    HandshakeError,
+};
 use crate::shared::{
     protocol::{self, client_hello::MonitorInfo, ClientHello, ServerHelloAck},
     LengthType, LENGTH_SIZE, PROTOCOL_VERSION,
@@ -12,17 +25,6 @@ use rsa::{
 use sha2::Sha256;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
-
-use super::{
-    auth::{AuthProvider, AuthVerifier},
-    protocol::{
-        client_auth::{self, AuthData},
-        server_auth_ack::AuthStatus,
-        server_hello_ack::{self, AuthMethod, SignatureMethod},
-        status_update::StatusType,
-    },
-    HandshakeError,
-};
 
 /// A codec for reading and writing length-value encoded messages.
 #[derive(Debug)]
@@ -52,7 +54,7 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
 
     /// Reads a whole length-value encoded message from the underlying reader.
     /// Returns the message bytes as a `Vec<u8>`.
-    pub async fn read_message(&mut self) -> std::io::Result<prost::bytes::Bytes> {
+    async fn read_message_internal(&mut self) -> std::io::Result<prost::bytes::Bytes> {
         let read_timeout = Duration::from_millis(10); // Set a 10-second timeout
 
         if !self.partial_read {
@@ -74,8 +76,25 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
         Ok(bytes)
     }
 
+    #[cfg(feature = "client")]
+    pub async fn read_message(&mut self) -> std::io::Result<protocol::server_message::ServerEvent> {
+        let x = self.read_message_internal().await?;
+        Ok(protocol::ServerMessage::decode(x)?
+            .server_event
+            .expect("ServerEvent is required"))
+    }
+
+    #[cfg(not(feature = "client"))]
+    pub async fn read_message(&mut self) -> std::io::Result<protocol::client_message::ClientEvent> {
+        let x = self.read_message_internal().await?;
+        Ok(protocol::ClientMessage::decode(x)?
+            .client_event
+            .expect("ClientEvent is required"))
+    }
+
     /// Writes a length-value encoded message to the underlying writer.
-    pub async fn write_message<T: Message>(&mut self, message: T) -> std::io::Result<()> {
+    #[inline]
+    async fn write_message_internal<T: Message>(&mut self, message: T) -> std::io::Result<()> {
         let message = message.encode_to_vec();
         let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
         let length = message.len() as LengthType;
@@ -87,11 +106,28 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> AsyncMessageCodec<S> {
         self.stream.flush().await?;
         Ok(())
     }
+
+    #[cfg(feature = "client")]
+    pub async fn write_message(
+        &mut self,
+        message: impl Into<protocol::ClientMessage>,
+    ) -> std::io::Result<()> {
+        self.write_message_internal(message.into()).await
+    }
+
+    #[cfg(not(feature = "client"))]
+    pub async fn write_message(
+        &mut self,
+        message: impl Into<protocol::ServerMessage>,
+    ) -> std::io::Result<()> {
+        self.write_message_internal(message.into()).await
+    }
 }
 
 /// Handshake function for the **client side**.
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
+#[cfg(feature = "client")]
 pub async fn handshake_client<S, A>(
     messages: &mut AsyncMessageCodec<S>,
     monitors: Vec<MonitorInfo>,
@@ -102,6 +138,8 @@ where
     S: AsyncRead + AsyncWrite + Send + Unpin,
     A: AuthProvider,
 {
+    use crate::shared::protocol::server_message::ServerEvent;
+
     let os = match std::env::consts::OS {
         "linux" => protocol::client_hello::Os::Linux,
         "windows" => protocol::client_hello::Os::Windows,
@@ -117,7 +155,11 @@ where
             monitors,
         })
         .await?;
-    let server_hello = protocol::ServerHelloAck::decode(messages.read_message().await?)?;
+    let ServerEvent::ServerHelloAck(server_hello) = messages.read_message().await? else {
+        return Err(HandshakeError::AnyError(
+            "Expected ServerHelloAck message".into(),
+        ));
+    };
 
     // Send ClientAuth message if auth_method is set
     if let Some(server_hello_ack::AuthMethod::Password(_)) = server_hello.auth_method {
@@ -129,7 +171,11 @@ where
             })
             .await?;
         // Wait for ServerAuthAck message
-        let server_auth_ack = protocol::ServerAuthAck::decode(messages.read_message().await?)?;
+        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_message().await? else {
+            return Err(HandshakeError::AnyError(
+                "Expected ServerAuthAck message".into(),
+            ));
+        };
         if server_auth_ack.status != AuthStatus::Success as i32 {
             return Err(HandshakeError::InvalidPassword);
         }
@@ -152,7 +198,11 @@ where
             })
             .await?;
         // Wait for ServerAuthAck message
-        let server_auth_ack = protocol::ServerAuthAck::decode(messages.read_message().await?)?;
+        let ServerEvent::ServerAuthAck(server_auth_ack) = messages.read_message().await? else {
+            return Err(HandshakeError::AnyError(
+                "Expected ServerAuthAck message".into(),
+            ));
+        };
         if server_auth_ack.status != AuthStatus::Success as i32 {
             return Err(HandshakeError::SignatureInvalid);
         }
@@ -171,6 +221,7 @@ where
 /// Handshake function for the **server side**.
 /// It reads a `ClientHello` message and sends a `ServerHelloAck` response.
 /// If the client version is not compatible, it sends a `StatusUpdate` message and returns an error.
+#[cfg(not(feature = "client"))]
 pub async fn handshake_server<S>(
     messages: &mut AsyncMessageCodec<S>,
     supported_protocol_versions: &[u32],
@@ -180,8 +231,14 @@ pub async fn handshake_server<S>(
 where
     S: AsyncRead + AsyncWrite + Send + Unpin,
 {
+    use crate::shared::protocol::client_message::ClientEvent;
+
     let auth_method = server_hello.auth_method.clone();
-    let client_hello = protocol::ClientHello::decode(messages.read_message().await?)?;
+    let ClientEvent::ClientHello(client_hello) = messages.read_message().await? else {
+        return Err(HandshakeError::AnyError(
+            "Expected ClientHello message".into(),
+        ));
+    };
     if !supported_protocol_versions.contains(&client_hello.protocol_version) {
         let msg = format!(
             "Unsupported client protocol version: {}. Supported versions: {:?}",
@@ -199,8 +256,11 @@ where
 
     // Verify ClientAuth message if auth_method is set
     if let Some(AuthMethod::Password(_)) = auth_method {
-        let client_auth: protocol::ClientAuth =
-            protocol::ClientAuth::decode(messages.read_message().await?)?;
+        let ClientEvent::ClientAuth(client_auth) = messages.read_message().await? else {
+            return Err(HandshakeError::AnyError(
+                "Expected ClientAuth message".into(),
+            ));
+        };
         let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
         let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
         let AuthVerifier::Password(password_verifier) = auth_verifier else {
@@ -235,8 +295,13 @@ where
                 .await?;
         }
     } else if let Some(AuthMethod::Signature(server_auth)) = auth_method {
-        let client_auth: protocol::ClientAuth =
-            protocol::ClientAuth::decode(messages.read_message().await?)?;
+        use crate::shared::protocol::{client_message::ClientEvent, server_message::ServerEvent};
+
+        let ClientEvent::ClientAuth(client_auth) = messages.read_message().await? else {
+            return Err(HandshakeError::AnyError(
+                "Expected ClientAuth message".into(),
+            ));
+        };
         let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
         let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
         let AuthVerifier::Signature(signature_verifier) = auth_verifier else {
@@ -310,6 +375,7 @@ where
 }
 
 /// Verify the signature using the public key and the sign message from the server
+#[allow(dead_code)]
 fn verify_signature(sign_message: &[u8], signature: Signature, public_key: RsaPublicKey) -> bool {
     let verifying_key = VerifyingKey::<Sha256>::new(public_key);
     verifying_key.verify(sign_message, &signature).is_ok()

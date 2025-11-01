@@ -4,6 +4,7 @@ use libgsh::shared::{
     protocol::{
         self,
         server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
+        server_message::ServerEvent,
         status_update::{Details, StatusType},
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
@@ -126,26 +127,49 @@ impl Client {
     async fn destroy_window(&mut self, window_id: WindowID) -> Result<()> {
         if let Some(mut win) = self.windows.remove(&window_id) {
             win.canvas.window_mut().hide();
-            self.messages
-                .write_message(protocol::UserInput {
-                    kind: protocol::user_input::InputType::WindowEvent as i32,
-                    window_id,
-                    input_event: Some(protocol::user_input::InputEvent::WindowEvent(
-                        user_input::WindowEvent {
-                            action: WindowAction::Close as i32,
-                            x: 0,
-                            y: 0,
-                            width: 0,
-                            height: 0,
-                        },
-                    )),
-                })
-                .await?;
-            // Remove the window from the mapping
+            // Translate SDL window id to server window id if possible
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
+                // Remove reverse mapping
                 self.server_window_to_sdl_window.remove(&server_window_id);
+                self.messages
+                    .write_message(protocol::UserInput {
+                        window_id: server_window_id,
+                        kind: protocol::user_input::InputType::WindowEvent as i32,
+                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                            user_input::WindowEvent {
+                                action: WindowAction::Close as i32,
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            },
+                        )),
+                    })
+                    .await?;
+                log::info!(
+                    "Window ID {} destroyed (server id {})",
+                    window_id,
+                    server_window_id
+                );
+            } else {
+                // Fallback: send to window 0 if no mapping exists
+                self.messages
+                    .write_message(protocol::UserInput {
+                        window_id: 0,
+                        kind: protocol::user_input::InputType::WindowEvent as i32,
+                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                            user_input::WindowEvent {
+                                action: WindowAction::Close as i32,
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            },
+                        )),
+                    })
+                    .await?;
+                log::info!("Window ID {} destroyed (no server mapping)", window_id);
             }
-            log::info!("Window ID {} destroyed", window_id);
         } else {
             log::warn!("Window ID {} not found (not destroyed)", window_id);
         }
@@ -214,12 +238,23 @@ impl Client {
             _ => 0,
         };
 
+        let server_window_id = *self
+            .sdl_window_to_server_window
+            .get(&window_id)
+            .unwrap_or(&0);
+        log::trace!(
+            "Sending mouse event -> server_window_id={}, action={:?}, x={}, y={}, button={}, dx={}, dy={}",
+            server_window_id,
+            action,
+            mouse_x,
+            mouse_y,
+            button,
+            delta_x,
+            delta_y
+        );
         self.messages
             .write_message(UserInput {
-                window_id: *self
-                    .sdl_window_to_server_window
-                    .get(&window_id)
-                    .unwrap_or(&0),
+                window_id: server_window_id,
                 kind: InputType::MouseEvent as i32,
                 input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
                     action: action as i32,
@@ -264,7 +299,8 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_event(&mut self, event: Event) -> Result<bool> {
+    async fn handle_window_event(&mut self, event: Event) -> Result<bool> {
+        log::trace!("SDL event: {:?}", event);
         match event {
             Event::Quit { .. } => {
                 log::trace!("Received quit event, exiting...");
@@ -415,8 +451,8 @@ impl Client {
         'running: loop {
             // Read messages from the server
             match self.messages.read_message().await {
-                Ok(buf) => {
-                    if !self.handle_message(&buf).await? {
+                Ok(event) => {
+                    if !self.handle_server_event(event).await? {
                         break 'running;
                     }
                 }
@@ -439,7 +475,7 @@ impl Client {
 
             // Events from SDL2 windows
             for event in event_pump.poll_iter() {
-                if !self.handle_event(event).await? {
+                if !self.handle_window_event(event).await? {
                     break 'running;
                 }
             }
@@ -457,22 +493,22 @@ impl Client {
             }
             last_frame_time = Instant::now();
         }
-        log::trace!("Exiting main loop...");
         for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
             self.destroy_window(window_id).await?;
         }
         Ok(())
     }
 
-    async fn handle_message(&mut self, buf: &Bytes) -> Result<bool> {
-        if let Ok(frame) = Frame::decode(&buf[..]) {
-            self.render_frame(frame)?;
-            Ok(true)
-        } else if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
-            self.handle_status_update(status_update).await
-        } else {
-            log::error!("Failed to decode message: {:?}", &buf[..]);
-            return Err(anyhow!("Failed to decode message"));
+    async fn handle_server_event(&mut self, event: ServerEvent) -> Result<bool> {
+        match event {
+            ServerEvent::StatusUpdate(status_update) => {
+                self.handle_status_update(status_update).await
+            }
+            ServerEvent::Frame(frame) => self.render_frame(frame),
+            other => {
+                log::error!("Unexpected server event: {:?}", other);
+                return Err(anyhow!("Unexpected server event"));
+            }
         }
     }
 
@@ -512,10 +548,10 @@ impl Client {
         }
     }
 
-    fn render_frame(&mut self, frame: Frame) -> Result<()> {
+    fn render_frame(&mut self, frame: Frame) -> Result<bool> {
         if frame.segments.is_empty() || frame.width == 0 || frame.height == 0 {
             log::warn!("Received empty frame, skipping rendering.");
-            return Ok(());
+            return Ok(true); // Keep going
         }
         log::debug!(
             "Received frame of size {}x{} and {} segments",
@@ -584,6 +620,6 @@ impl Client {
                 server_window_id
             );
         }
-        Ok(())
+        Ok(true) // Keep going
     }
 }

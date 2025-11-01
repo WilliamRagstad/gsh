@@ -9,19 +9,18 @@ use libgsh::{
         service::{AsyncService, AsyncServiceExt},
         Messages,
     },
-    shared::{
-        protocol::{
-            server_hello_ack::{window_settings, Compression, FrameFormat, WindowSettings, ZstdCompression},
-            user_input::{mouse_event::MouseAction, window_event::WindowAction, InputEvent},
-            Frame, ServerHelloAck,
+    shared::protocol::{
+        client_message::ClientEvent,
+        server_hello_ack::{
+            window_settings, Compression, FrameFormat, WindowSettings, ZstdCompression,
         },
-        ClientEvent,
+        user_input::{mouse_event::MouseAction, window_event::WindowAction, InputEvent},
+        Frame, ServerHelloAck,
     },
     tokio,
     tokio_rustls::rustls::{crypto::ring, ServerConfig},
     Result, ServiceError,
 };
-use ndarray::Array2;
 use rayon::prelude::*;
 use std::time::Instant;
 
@@ -38,8 +37,6 @@ struct Particle {
     position: Vec2,
     velocity: Vec2,
 }
-
-
 
 #[tokio::main]
 async fn main() {
@@ -99,9 +96,10 @@ impl LiquidSimService {
             let pos = center + Vec2::new(angle.cos() * radius, angle.sin() * radius);
 
             // Velocity pointing outward with some tangential component
+            // Smaller initial velocities so particles are calmer by default
             let vel = Vec2::new(
-                angle.cos() * 50.0 + angle.sin() * 20.0,
-                angle.sin() * 50.0 - angle.cos() * 20.0,
+                angle.cos() * 8.0 + angle.sin() * 3.0,
+                angle.sin() * 8.0 - angle.cos() * 3.0,
             );
 
             particles.push(Particle {
@@ -116,15 +114,16 @@ impl LiquidSimService {
     fn update_particles(&mut self, dt: f32) {
         let width = self.width as f32;
         let height = self.height as f32;
-        
+
         // Update each particle in parallel using rayon
         self.particles.par_iter_mut().for_each(|particle| {
-            // Apply gravity
-            let gravity = Vec2::new(0.0, 200.0);
+            // Apply mild gravity (lower so particles don't constantly slide)
+            let gravity = Vec2::new(0.0, 40.0);
             particle.velocity += gravity * dt;
 
-            // Apply damping
-            particle.velocity *= 0.995;
+            // Apply stronger damping so particles settle to rest quickly
+            let damping = 0.90f32.powf(dt * 60.0);
+            particle.velocity *= damping;
 
             // Update position
             particle.position += particle.velocity * dt;
@@ -154,106 +153,147 @@ impl LiquidSimService {
         // For production with more particles, use spatial partitioning (grid/quadtree)
         // or limit interaction distance more aggressively.
         let particles_clone = self.particles.clone();
-        let influence_radius = 20.0;
-        let repulsion_strength = 5000.0;
+        // Make interactions weaker and shorter range so system is calmer
+        let influence_radius = 12.0;
+        let repulsion_strength = 1200.0;
 
-        self.particles.par_iter_mut().enumerate().for_each(|(i, particle)| {
-            let mut force = Vec2::ZERO;
+        self.particles
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, particle)| {
+                let mut force = Vec2::ZERO;
 
-            for (j, other) in particles_clone.iter().enumerate() {
-                if i == j {
-                    continue;
-                }
+                for (j, other) in particles_clone.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
 
-                let diff = particle.position - other.position;
-                let dist_sq = diff.length_squared();
+                    let diff = particle.position - other.position;
+                    let dist_sq = diff.length_squared();
 
-                if dist_sq < influence_radius * influence_radius && dist_sq > 0.01 {
-                    let dist = dist_sq.sqrt();
-                    let dir = diff / dist;
-                    let repulsion = repulsion_strength / dist_sq;
-                    force += dir * repulsion;
-                }
-            }
-
-            particle.velocity += force * dt;
-        });
-
-        // Apply mouse interaction forces
-        if let (Some(mouse_pos), Some(prev_mouse_pos)) = (self.mouse_pos, self.prev_mouse_pos) {
-            let mouse_velocity = (mouse_pos - prev_mouse_pos) / dt.max(0.001);
-            let mouse_influence_radius = 80.0;
-            let mouse_strength = 15000.0;
-
-            self.particles.par_iter_mut().for_each(|particle| {
-                let diff = particle.position - mouse_pos;
-                let dist_sq = diff.length_squared();
-
-                if dist_sq < mouse_influence_radius * mouse_influence_radius {
-                    let dist = dist_sq.sqrt();
-                    if dist > 0.1 {
-                        // Add velocity based on mouse movement
-                        particle.velocity += mouse_velocity * 0.5;
-                        
-                        // Add a push force away from mouse cursor
+                    if dist_sq < influence_radius * influence_radius && dist_sq > 0.01 {
+                        let dist = dist_sq.sqrt();
                         let dir = diff / dist;
-                        let push_force = mouse_strength / (dist_sq + 100.0);
-                        particle.velocity += dir * push_force * dt;
+                        let repulsion = repulsion_strength / dist_sq;
+                        force += dir * repulsion;
                     }
                 }
+
+                particle.velocity += force * dt;
             });
+
+        // Apply mouse interaction forces based on the position delta between
+        // mouse samples. This is more robust than a strict speed threshold.
+        if let (Some(mouse_pos), Some(prev_mouse_pos)) = (self.mouse_pos, self.prev_mouse_pos) {
+            let mouse_delta = mouse_pos - prev_mouse_pos;
+            let delta_len = mouse_delta.length();
+            let mouse_influence_radius = 80.0;
+            let mouse_strength = 12000.0;
+
+            // If the pointer moved at least a little, apply forces.
+            if delta_len > 0.1 {
+                // Derive a velocity-like vector using frame dt so effect scales sensibly
+                let mouse_velocity = mouse_delta / dt.max(0.001);
+                log::trace!(
+                    "Mouse delta: {:.2}, velocity: {:.2}",
+                    delta_len,
+                    mouse_velocity.length()
+                );
+
+                // Scale influence by how large the movement was
+                let mv = mouse_velocity * 0.6;
+                let strength_scale = (delta_len / 30.0).clamp(0.2, 2.0);
+
+                self.particles.par_iter_mut().for_each(|particle| {
+                    let diff = particle.position - mouse_pos;
+                    let dist_sq = diff.length_squared();
+
+                    if dist_sq < mouse_influence_radius * mouse_influence_radius {
+                        let dist = dist_sq.sqrt();
+                        if dist > 0.1 {
+                            // Add velocity based on mouse movement
+                            particle.velocity += mv;
+
+                            // Add a push force away from mouse cursor (weaker with distance)
+                            let dir = diff / dist;
+                            let push_force = mouse_strength * strength_scale / (dist_sq + 400.0);
+                            particle.velocity += dir * push_force * dt;
+                        }
+                    }
+                });
+            }
         }
+
+        // If particles are very slow, zero them out so they appear to stop
+        self.particles.par_iter_mut().for_each(|particle| {
+            if particle.velocity.length_squared() < 0.5 {
+                particle.velocity = Vec2::ZERO;
+            }
+        });
     }
 
     fn render_particles(&self) -> Vec<u8> {
-        // Create a 2D array for the frame buffer
-        let mut frame = Array2::<u32>::zeros((self.height, self.width));
+        // We'll accumulate into float RGBA channels for smooth/soft particles
+        let w = self.width;
+        let h = self.height;
+        let mut accum: Vec<[f32; 4]> = vec![[5.0 / 255.0, 5.0 / 255.0, 12.0 / 255.0, 0.0]; w * h];
 
-        // Render each particle
+        // Render each particle as a soft circle with falloff
         for particle in &self.particles {
-            let x = particle.position.x as usize;
-            let y = particle.position.y as usize;
+            let cx = particle.position.x;
+            let cy = particle.position.y;
 
-            if x < self.width && y < self.height {
-                // Calculate color based on velocity
-                let speed = particle.velocity.length();
-                let normalized_speed = (speed / 200.0).clamp(0.0, 1.0);
+            // Color based on velocity (cooler when slow, brighter when fast)
+            let speed = particle.velocity.length();
+            let normalized_speed = (speed / 200.0).clamp(0.0, 1.0);
+            let pr = (0.2 + normalized_speed * 0.8) as f32;
+            let pg = (0.4 + normalized_speed * 0.6) as f32;
+            let pb = (0.8 + normalized_speed * 0.2) as f32;
 
-                // Blue to cyan to white based on speed
-                let r = (0.2 + normalized_speed * 0.8 * 255.0) as u8;
-                let g = (0.4 + normalized_speed * 0.6 * 255.0) as u8;
-                let b = (0.8 + normalized_speed * 0.2 * 255.0) as u8;
-                let a = 230u8;
+            // Particle visual radius
+            let radius = 6.0 + normalized_speed * 6.0;
+            let r_sq = radius * radius;
 
-                // Pack RGBA into u32
-                let color = (a as u32) << 24 | (b as u32) << 16 | (g as u32) << 8 | (r as u32);
+            let min_x = ((cx - radius).floor() as isize).max(0) as usize;
+            let max_x = ((cx + radius).ceil() as isize).min((w - 1) as isize) as usize;
+            let min_y = ((cy - radius).floor() as isize).max(0) as usize;
+            let max_y = ((cy + radius).ceil() as isize).min((h - 1) as isize) as usize;
 
-                // Draw a small circle (simplified as a square for performance)
-                let size = 3;
-                for dy in 0..size {
-                    for dx in 0..size {
-                        let px = x.saturating_add(dx).saturating_sub(size / 2);
-                        let py = y.saturating_add(dy).saturating_sub(size / 2);
-                        if px < self.width && py < self.height {
-                            frame[[py, px]] = color;
-                        }
+            for py in min_y..=max_y {
+                for px in min_x..=max_x {
+                    let dx = px as f32 + 0.5 - cx;
+                    let dy = py as f32 + 0.5 - cy;
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq <= r_sq {
+                        let dist = dist_sq.sqrt();
+                        // Smooth falloff: gaussian-like (exp) or simple linear
+                        let t = 1.0 - (dist / radius);
+                        let alpha = (t * t * 0.9).max(0.0); // emphasize center
+
+                        let idx = py * w + px;
+                        accum[idx][0] += pr * alpha;
+                        accum[idx][1] += pg * alpha;
+                        accum[idx][2] += pb * alpha;
+                        // We accumulate alpha too for blending decisions
+                        accum[idx][3] = (accum[idx][3] + alpha).min(10.0);
                     }
                 }
             }
         }
 
-        // Convert to RGBA8 byte array
-        let mut rgba_data = Vec::with_capacity(self.width * self.height * PIXEL_BYTES);
-        for pixel in frame.iter() {
-            // Unpack u32 back to RGBA
-            let r = (*pixel & 0xFF) as u8;
-            let g = ((*pixel >> 8) & 0xFF) as u8;
-            let b = ((*pixel >> 16) & 0xFF) as u8;
-            let a = ((*pixel >> 24) & 0xFF) as u8;
+        // Convert accum buffer to RGBA8
+        let mut rgba_data = Vec::with_capacity(w * h * PIXEL_BYTES);
+        for px in 0..(w * h) {
+            // approximate final alpha
+            let ar = accum[px][3].clamp(0.0, 1.0);
+            let r = (accum[px][0] * 255.0).min(255.0) as u8;
+            let g = (accum[px][1] * 255.0).min(255.0) as u8;
+            let b = (accum[px][2] * 255.0).min(255.0) as u8;
+            let a = (ar * 255.0).min(255.0) as u8;
 
-            // Fill background if pixel is transparent
+            // If alpha is tiny, keep solid background tone
             if a == 0 {
-                rgba_data.extend_from_slice(&[5, 5, 12, 255]); // Dark blue background
+                rgba_data.extend_from_slice(&[5u8, 5u8, 12u8, 255u8]);
             } else {
                 rgba_data.extend_from_slice(&[r, g, b, a]);
             }
@@ -358,6 +398,7 @@ impl AsyncServiceExt for LiquidSimService {
     }
 
     async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+        log::trace!("Got event: {:?}", event);
         if let ClientEvent::UserInput(input) = &event {
             // Handle mouse events
             if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
@@ -368,7 +409,7 @@ impl AsyncServiceExt for LiquidSimService {
                     log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
                 }
             }
-            
+
             // Handle window events
             if let Some(InputEvent::WindowEvent(window_event)) = input.input_event.as_ref() {
                 if window_event.action == WindowAction::Resize as i32 {

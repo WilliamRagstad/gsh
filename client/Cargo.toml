@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-libgsh = { workspace = true }
+libgsh = { workspace = true, features = ["client"] }
 clap = { version = "4.5.35", features = ["derive"] }
 webpki-roots = "0.26.8"
 # Use SDL3 bindings instead of SDL2. Version may need adjustment based on available crate.

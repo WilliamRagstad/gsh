@@ -1,9 +1,3 @@
-use std::{
-    io::Write,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Instant,
-};
-
 use libgsh::{
     async_trait::async_trait,
     cert,
@@ -14,12 +8,18 @@ use libgsh::{
         Messages,
     },
     shared::protocol::{
+        client_message,
         server_hello_ack::{self, window_settings, FrameFormat, WindowSettings, ZstdCompression},
         Frame, ServerHelloAck,
     },
     tokio,
     tokio_rustls::rustls::ServerConfig,
     ServiceError,
+};
+use std::{
+    io::Write,
+    sync::{mpsc::Receiver, Arc, Mutex},
+    time::Instant,
 };
 use xcap::Monitor;
 
@@ -65,7 +65,7 @@ async fn main() {
         .start()
         .expect("Failed to start video recorder");
 
-    // Unsafe transmute to convert video_stream Recorder to XCapFrame reciever
+    // Unsafe transmute to convert video_stream Recorder to XCapFrame receiver
     // Ugly hack because `xcap::video_recorder::Frame` is not public.
     let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
     let recorder = Arc::new(Mutex::new(video_stream));
@@ -124,7 +124,7 @@ impl AsyncServiceExt for RdpService {
     async fn on_event(
         &mut self,
         _messages: &mut Messages,
-        event: libgsh::shared::ClientEvent,
+        event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
         log::info!("Received event: {:?}", event);
         Ok(())

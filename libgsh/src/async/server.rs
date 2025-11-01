@@ -34,10 +34,7 @@ where
     /// Creates a new `AsyncServer` instance with the provided server configuration.\
     /// The `ServerConfig` is used to configure the TLS settings for the server.
     pub fn new(service: ServiceT, config: ServerConfig) -> Self {
-        Self {
-            service,
-            config,
-        }
+        Self { service, config }
     }
 
     /// Starts the server and listens for incoming connections on the default port (1122).\
@@ -78,7 +75,11 @@ where
 
     /// Handles a client connection.\
     /// This function performs the TLS handshake and starts the service's main event loop.\
-    async fn handle_client(service: ServiceT, mut messages: Messages, addr: std::net::SocketAddr) -> Result<()> {
+    async fn handle_client(
+        service: ServiceT,
+        mut messages: Messages,
+        addr: std::net::SocketAddr,
+    ) -> Result<()> {
         let client = crate::shared::r#async::handshake_server(
             &mut messages,
             &[crate::shared::PROTOCOL_VERSION],

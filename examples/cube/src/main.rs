@@ -8,13 +8,11 @@ use libgsh::{
         service::{AsyncService, AsyncServiceExt},
         Messages,
     },
-    shared::{
-        protocol::{
-            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
-            user_input::{window_event::WindowAction, InputEvent},
-            Frame, ServerHelloAck,
-        },
-        ClientEvent,
+    shared::protocol::{
+        client_message::ClientEvent,
+        server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+        user_input::{window_event::WindowAction, InputEvent},
+        Frame, ServerHelloAck,
     },
     tokio,
     tokio_rustls::rustls::{crypto::ring, ServerConfig},

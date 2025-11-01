@@ -3,6 +3,29 @@ package protocol;
 
 import "google/protobuf/empty.proto";
 
+
+// Wrapper message for all post-authentication client messages
+// Client -> Server
+message ClientMessage {
+	oneof client_event {
+		ClientHello client_hello = 1;
+		ClientAuth client_auth = 2;
+		StatusUpdate status_update = 3;
+		UserInput user_input = 4;
+	}
+}
+
+// Wrapper message for all post-authentication server messages
+// Server -> Client
+message ServerMessage {
+	oneof server_event {
+		ServerHelloAck server_hello_ack = 1;
+		ServerAuthAck server_auth_ack = 2;
+		StatusUpdate status_update = 3;
+		Frame frame = 4;
+	}
+}
+
 // Initial connection message from the client to the server
 // Client -> Server
 message ClientHello {
@@ -109,22 +132,39 @@ message ServerAuthAck {
 	string message = 2;   // Message providing additional information about the authentication status
 }
 
-// Message representing a frame of image data
+// Message representing status updates
 // Server -> Client
-message Frame {
-	uint32 window_id = 1; // Unique identifier for the window
-	uint32 width = 2;     // Width of the image in pixels
-	uint32 height = 3;    // Height of the image in pixels
-
-	// Partial frame segments
-	message Segment {
-		int32 x = 1;        // X coordinate of the top-left corner of the segment
-		int32 y = 2;        // Y coordinate of the top-left corner of the segment
-		uint32 width = 3;    // Width of the segment in pixels
-		uint32 height = 4;   // Height of the segment in pixels
-		bytes data = 5;      // Raw image data in bytes
+// Client -> Server
+message StatusUpdate {
+	enum StatusType {
+		INFO = 0;
+		WARNING = 1;
+		ERROR = 2;
+		EXIT = 3;
 	}
-	repeated Segment segments = 4; // List of segments in the frame
+	StatusType kind = 1; // Type of status update
+	oneof details {
+		Info info = 2;
+		Warning warning = 3;
+		Error error = 4;
+	}
+
+	// Nested message for informational updates
+	message Info {
+		string message = 1; // Informational message
+	}
+
+	// Nested message for warning updates
+	message Warning {
+		string message = 1; // Warning message
+		int32 code = 2;     // Warning code
+	}
+
+	// Nested message for error updates
+	message Error {
+		string message = 1; // Error message
+		int32 code = 2;     // Error code
+	}
 }
 
 // Message representing user input events
@@ -198,37 +238,20 @@ message UserInput {
 	}
 }
 
-// Message representing status updates
+// Message representing a frame of image data
 // Server -> Client
-// Client -> Server
-message StatusUpdate {
-	enum StatusType {
-		INFO = 0;
-		WARNING = 1;
-		ERROR = 2;
-		EXIT = 3;
-	}
-	StatusType kind = 1; // Type of status update
-	oneof details {
-		Info info = 2;
-		Warning warning = 3;
-		Error error = 4;
-	}
+message Frame {
+	uint32 window_id = 1; // Unique identifier for the window
+	uint32 width = 2;     // Width of the image in pixels
+	uint32 height = 3;    // Height of the image in pixels
 
-	// Nested message for informational updates
-	message Info {
-		string message = 1; // Informational message
+	// Partial frame segments
+	message Segment {
+		int32 x = 1;        // X coordinate of the top-left corner of the segment
+		int32 y = 2;        // Y coordinate of the top-left corner of the segment
+		uint32 width = 3;    // Width of the segment in pixels
+		uint32 height = 4;   // Height of the segment in pixels
+		bytes data = 5;      // Raw image data in bytes
 	}
-
-	// Nested message for warning updates
-	message Warning {
-		string message = 1; // Warning message
-		int32 code = 2;     // Warning code
-	}
-
-	// Nested message for error updates
-	message Error {
-		string message = 1; // Error message
-		int32 code = 2;     // Error code
-	}
+	repeated Segment segments = 4; // List of segments in the frame
 }

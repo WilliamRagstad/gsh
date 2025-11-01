@@ -2,8 +2,10 @@ use super::Messages;
 use crate::shared::{
     auth::AuthVerifier,
     prost::Message,
-    protocol::{status_update::StatusType, ServerHelloAck, StatusUpdate, UserInput},
-    ClientEvent,
+    protocol::{
+        client_message::ClientEvent, status_update::StatusType, ServerHelloAck, StatusUpdate,
+        UserInput,
+    },
 };
 use crate::{Result, ServiceError};
 use std::io::Write;

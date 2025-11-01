@@ -2,12 +2,10 @@ use env_logger::Env;
 use libgsh::{
     cert,
     frame::optimize_segments,
-    shared::{
-        protocol::{
-            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
-            Frame, ServerHelloAck,
-        },
-        ClientEvent,
+    shared::protocol::{
+        client_message::ClientEvent,
+        server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+        Frame, ServerHelloAck,
     },
     simple::{
         server::SimpleServer,
