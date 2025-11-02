@@ -1,10 +1,6 @@
 use libgsh::{
     async_trait::async_trait,
-    server::{
-        server::AsyncServer,
-        service::{AsyncService, AsyncServiceExt},
-        Messages,
-    },
+    server::{GshServer, GshService, GshServiceExt, GshStream},
     shared::cert,
     shared::frame::full_frame_segment,
     shared::protocol::{
@@ -71,7 +67,7 @@ async fn main() {
     let recorder = Arc::new(Mutex::new(video_stream));
 
     // Start service
-    let server = AsyncServer::new(RdpService::new(recorder), config);
+    let server = GshServer::new(RdpService::new(recorder), config);
     server.serve().await.unwrap();
 }
 
@@ -91,7 +87,7 @@ impl RdpService {
 }
 
 #[async_trait]
-impl AsyncService for RdpService {
+impl GshService for RdpService {
     fn server_hello(&self) -> libgsh::shared::protocol::ServerHelloAck {
         ServerHelloAck {
             windows: vec![WindowSettings {
@@ -114,33 +110,33 @@ impl AsyncService for RdpService {
         }
     }
 
-    async fn main(self, messages: Messages) -> libgsh::Result<()> {
-        <Self as AsyncServiceExt>::main(self, messages).await
+    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 }
 
 #[async_trait]
-impl AsyncServiceExt for RdpService {
+impl GshServiceExt for RdpService {
     async fn on_event(
         &mut self,
-        _messages: &mut Messages,
+        _stream: &mut GshStream,
         event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
         log::info!("Received event: {:?}", event);
         Ok(())
     }
 
-    async fn on_tick(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
+    async fn on_tick(&mut self, stream: &mut GshStream) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
-            messages.write_event(self.get_frame()?).await?;
+            stream.send(self.get_frame()?).await?;
             self.last_frame = std::time::Instant::now();
             log::debug!("Sent frame");
         }
         Ok(())
     }
 
-    async fn on_startup(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
-        messages.write_event(self.get_frame()?).await?;
+    async fn on_startup(&mut self, stream: &mut GshStream) -> libgsh::Result<()> {
+        stream.send(self.get_frame()?).await?;
         log::debug!("Sent initial frame");
         Ok(())
     }

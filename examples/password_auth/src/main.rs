@@ -1,16 +1,15 @@
 use libgsh::{
+    async_trait::async_trait,
+    server::{GshServer, GshService, GshServiceExt, GshStream},
     shared::{
         auth::{AuthVerifier, PasswordVerifier},
         protocol::{server_hello_ack, ServerHelloAck},
     },
-    simple::{
-        server::SimpleServer,
-        service::{SimpleService, SimpleServiceExt},
-        Messages,
-    },
+    tokio, ServerConfig,
 };
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -18,13 +17,13 @@ fn main() {
         .format_timestamp(None)
         .init();
     let (key, private_key) = libgsh::shared::cert::self_signed(&["localhost"]).unwrap();
-    let config = libgsh::tokio_rustls::rustls::ServerConfig::builder()
+    let config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
     const PASSWORD: &str = "password";
-    let server = SimpleServer::new(AuthService::new(PASSWORD.to_string()), config);
-    server.serve().unwrap();
+    let server = GshServer::new(AuthService::new(PASSWORD.to_string()), config);
+    server.serve().await.unwrap();
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +37,8 @@ impl AuthService {
     }
 }
 
-impl SimpleService for AuthService {
+#[async_trait]
+impl GshService for AuthService {
     fn server_hello(&self) -> ServerHelloAck {
         ServerHelloAck {
             format: server_hello_ack::FrameFormat::Rgb.into(),
@@ -54,13 +54,13 @@ impl SimpleService for AuthService {
         })))
     }
 
-    fn main(self, messages: Messages) -> libgsh::Result<()> {
-        // We simply proxy to the `SimpleServiceExt` implementation.
-        <Self as SimpleServiceExt>::main(self, messages)
+    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+        // Proxy to the default implementation provided by the extension trait.
+        <Self as GshServiceExt>::main(self, stream).await
     }
 }
 
-impl SimpleServiceExt for AuthService {}
+impl GshServiceExt for AuthService {}
 
 struct MyPasswordVerifier {
     password: String,

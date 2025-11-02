@@ -1,10 +1,7 @@
 use libgsh::{
+    async_trait::async_trait,
     rsa::RsaPublicKey,
-    server::{
-        server::GshServer,
-        service::{SimpleService, SimpleServiceExt},
-        Messages,
-    },
+    server::{GshServer, GshService, GshServiceExt, GshStream},
     shared::{
         auth::{AuthVerifier, SignatureVerifier},
         cert,
@@ -13,10 +10,12 @@ use libgsh::{
             ServerHelloAck,
         },
     },
+    tokio, ServerConfig,
 };
 use rand::RngCore;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -24,14 +23,14 @@ fn main() {
         .format_timestamp(None)
         .init();
     let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
-    let config = libgsh::ServerConfig::builder()
+    let config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
     let mut service = AuthService::default();
     service.authorize_key(cert::extract_public_key(include_str!("../example.pem")).unwrap());
-    let server = SimpleServer::new(service, config);
-    server.serve().unwrap();
+    let server = GshServer::new(service, config);
+    server.serve().await.unwrap();
 }
 
 #[derive(Debug, Clone, Default)]
@@ -46,10 +45,10 @@ impl AuthService {
     }
 }
 
-impl SimpleService for AuthService {
-    fn main(self, messages: Messages) -> libgsh::Result<()> {
-        // We simply proxy to the `SimpleServiceExt` implementation.
-        <Self as SimpleServiceExt>::main(self, messages)
+#[async_trait]
+impl GshService for AuthService {
+    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 
     fn server_hello(&self) -> ServerHelloAck {
@@ -62,7 +61,6 @@ impl SimpleService for AuthService {
             auth_method: Some(AuthMethod::Signature(SignatureMethod { sign_message })),
         }
     }
-
     fn auth_verifier(&self) -> Option<AuthVerifier> {
         Some(AuthVerifier::Signature(Box::new(MySignatureVerifier::new(
             self.authorized_keys.clone(),
@@ -70,7 +68,7 @@ impl SimpleService for AuthService {
     }
 }
 
-impl SimpleServiceExt for AuthService {}
+impl GshServiceExt for AuthService {}
 
 struct MySignatureVerifier {
     // Any custom data you need for verification can be added here.

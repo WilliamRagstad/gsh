@@ -2,13 +2,9 @@ use env_logger::Env;
 use glam::Vec2;
 use libgsh::{
     async_trait::async_trait,
-    cert,
-    frame::full_frame_segment,
-    r#async::{
-        server::AsyncServer,
-        service::{AsyncService, AsyncServiceExt},
-        Messages,
-    },
+    server::{GshServer, GshService, GshServiceExt, GshStream},
+    shared::cert,
+    shared::frame::full_frame_segment,
     shared::protocol::{
         client_message::ClientEvent,
         server_hello_ack::{
@@ -57,7 +53,7 @@ async fn main() {
         .unwrap();
 
     let service = LiquidSimService::default();
-    let server = AsyncServer::new(service, config);
+    let server = GshServer::new(service, config);
     server.serve().await.unwrap();
 }
 
@@ -314,7 +310,7 @@ impl LiquidSimService {
         self.render_particles()
     }
 
-    async fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
+    async fn send_frame(&mut self, stream: &mut GshStream) -> Result<()> {
         let rgba_data = self.simulate_and_render();
 
         // Compress the data with Zstd
@@ -335,8 +331,8 @@ impl LiquidSimService {
             (compressed.len() as f32 / rgba_data.len() as f32) * 100.0
         );
 
-        messages
-            .write_event(Frame {
+        stream
+            .send(Frame {
                 window_id: WINDOW_ID,
                 segments: full_frame_segment(&compressed, self.width, self.height),
                 width: self.width as u32,
@@ -356,9 +352,9 @@ impl LiquidSimService {
 }
 
 #[async_trait]
-impl AsyncService for LiquidSimService {
-    async fn main(self, messages: Messages) -> Result<()> {
-        <Self as AsyncServiceExt>::main(self, messages).await
+impl GshService for LiquidSimService {
+    async fn main(self, stream: GshStream) -> Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 
     fn server_hello(&self) -> ServerHelloAck {
@@ -385,19 +381,19 @@ impl AsyncService for LiquidSimService {
 }
 
 #[async_trait]
-impl AsyncServiceExt for LiquidSimService {
+impl GshServiceExt for LiquidSimService {
     const MAX_FPS: u32 = MAX_FPS;
 
-    async fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
+    async fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
         log::info!("Starting liquid simulation...");
-        self.send_frame(messages).await
+        self.send_frame(stream).await
     }
 
-    async fn on_tick(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages).await
+    async fn on_tick(&mut self, stream: &mut GshStream) -> Result<()> {
+        self.send_frame(stream).await
     }
 
-    async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = &event {
             // Handle mouse events
             if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
@@ -430,7 +426,7 @@ impl AsyncServiceExt for LiquidSimService {
                             let new_height = window_event.height as usize;
                             log::info!("Resizing to {}x{}", new_width, new_height);
                             self.resize(new_width, new_height);
-                            self.send_frame(messages).await?;
+                            self.send_frame(stream).await?;
                         }
                     }
                     WindowAction::Close => {

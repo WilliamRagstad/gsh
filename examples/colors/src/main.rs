@@ -1,21 +1,23 @@
 use env_logger::Env;
 use libgsh::{
+    async_trait::async_trait,
     server::{GshServer, GshService, GshServiceExt, GshStream},
-    shared::cert,
-    shared::frame::optimize_segments,
-    shared::protocol::{
-        client_message::ClientEvent,
-        server_hello_ack::{window_settings, FrameFormat, WindowSettings},
-        Frame, ServerHelloAck,
+    shared::{
+        cert,
+        frame::optimize_segments,
+        protocol::{
+            client_message::ClientEvent,
+            server_hello_ack::{window_settings, FrameFormat, WindowSettings},
+            Frame, ServerHelloAck,
+        },
     },
-    tokio_rustls::rustls::ServerConfig,
-    Result,
+    tokio, Result, ServerConfig,
 };
 use log::trace;
 use rand::random;
 
 #[tokio::main]
-fn main() {
+async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -93,6 +95,7 @@ impl ColorService {
     }
 }
 
+#[async_trait]
 impl GshService for ColorService {
     async fn main(self, stream: GshStream) -> libgsh::Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
@@ -135,15 +138,16 @@ impl GshService for ColorService {
 
 // The `GshServiceExt` trait provides a default event loop implementation,
 // we only need to implement the `events`, `tick` and `handle_event` methods.
+#[async_trait]
 impl GshServiceExt for ColorService {
-    fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
-        self.swap_colors(stream)
+    async fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
+        self.swap_colors(stream).await
     }
 
-    fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
-            self.swap_colors(stream)?;
+            self.swap_colors(stream).await?;
         }
         Ok(())
     }
