@@ -1,13 +1,13 @@
 #[allow(unused_imports)]
-use crate::shared::{
-    protocol::{
-        client_message::ClientEvent, server_message::ServerEvent, ClientMessage, ServerMessage,
-    },
-    LengthType, LENGTH_SIZE,
+use crate::shared::protocol::{
+    client_message::ClientEvent, server_message::ServerEvent, ClientMessage, ServerMessage,
 };
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
+
+type LengthType = u32;
+const LENGTH_SIZE: usize = std::mem::size_of::<LengthType>();
 
 /// A codec for reading and writing length-value encoded messages.
 #[derive(Debug)]

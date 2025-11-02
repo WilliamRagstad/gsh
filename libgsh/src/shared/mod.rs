@@ -9,9 +9,6 @@ pub mod protocol {
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
-type LengthType = u32;
-const LENGTH_SIZE: usize = std::mem::size_of::<LengthType>();
-
 #[derive(Debug, thiserror::Error)]
 pub enum HandshakeError {
     IoError(#[from] std::io::Error),

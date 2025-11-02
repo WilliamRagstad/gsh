@@ -151,13 +151,7 @@ async fn main() {
     let compression = hello.compression;
     println!("Successfully connected to server!");
 
-    let mut client = match Client::new(sdl, video, format, compression, messages) {
-        Ok(client) => client,
-        Err(e) => {
-            log::error!("Failed to create client: {}", e);
-            exit(1);
-        }
-    };
+    let mut client = Client::new(sdl, video, format, compression, messages);
 
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
@@ -181,7 +175,7 @@ async fn main() {
         exit(1);
     }
     log::info!("Shutting down client...");
-    let _ = network::shutdown_tls(client.messages()).await;
+    let _ = network::shutdown_tls(client.inner_stream()).await;
 }
 
 fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {

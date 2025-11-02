@@ -11,6 +11,8 @@ pub mod service;
 
 mod handshake;
 pub use handshake::handshake;
+pub use server::GshServer;
+pub use service::{GshService, GshServiceExt};
 
 /// Asynchronous message codec for the server `TlsStream` over a `TcpStream`.\
 pub type GshStream = GshCodec<TlsStream<TcpStream>>;

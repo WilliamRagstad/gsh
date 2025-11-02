@@ -1,16 +1,12 @@
 use env_logger::Env;
 use libgsh::{
-    cert,
-    frame::optimize_segments,
+    server::{GshServer, GshService, GshServiceExt, GshStream},
+    shared::cert,
+    shared::frame::optimize_segments,
     shared::protocol::{
         client_message::ClientEvent,
         server_hello_ack::{window_settings, FrameFormat, WindowSettings},
         Frame, ServerHelloAck,
-    },
-    simple::{
-        server::SimpleServer,
-        service::{SimpleService, SimpleServiceExt},
-        Messages,
     },
     tokio_rustls::rustls::ServerConfig,
     Result,
@@ -18,6 +14,7 @@ use libgsh::{
 use log::trace;
 use rand::random;
 
+#[tokio::main]
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .format_line_number(true)
@@ -30,8 +27,8 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<ColorService> = SimpleServer::new(ColorService::default(), config);
-    server.serve().unwrap();
+    let server: GshServer<ColorService> = GshServer::new(ColorService::default(), config);
+    server.serve().await.unwrap();
 }
 
 const FRAME_WIDTH: usize = 250;
@@ -49,7 +46,12 @@ pub struct ColorService {
 }
 
 impl ColorService {
-    fn send_frame(&mut self, messages: &mut Messages, window_id: u32, color: Color) -> Result<()> {
+    async fn send_frame(
+        &mut self,
+        stream: &mut GshStream,
+        window_id: u32,
+        color: Color,
+    ) -> Result<()> {
         let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES];
         for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
             frame[i * PIXEL_BYTES] = color.0; // Red
@@ -57,19 +59,21 @@ impl ColorService {
             frame[i * PIXEL_BYTES + 2] = color.2; // Blue
             frame[i * PIXEL_BYTES + 3] = 255;
         }
-        messages.write_event(Frame {
-            window_id,
-            // data: frame.to_vec(),
-            segments: optimize_segments(
-                &frame,
-                FRAME_WIDTH,
-                FRAME_HEIGHT,
-                &mut self.prev_frame,
-                PIXEL_BYTES,
-            ),
-            width: FRAME_WIDTH as u32,
-            height: FRAME_HEIGHT as u32,
-        })?;
+        stream
+            .send(Frame {
+                window_id,
+                // data: frame.to_vec(),
+                segments: optimize_segments(
+                    &frame,
+                    FRAME_WIDTH,
+                    FRAME_HEIGHT,
+                    &mut self.prev_frame,
+                    PIXEL_BYTES,
+                ),
+                width: FRAME_WIDTH as u32,
+                height: FRAME_HEIGHT as u32,
+            })
+            .await?;
         Ok(())
     }
 
@@ -80,17 +84,18 @@ impl ColorService {
         (r, g, b)
     }
 
-    fn swap_colors(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages, WINDOW_SECONDARY, self.color)?;
+    async fn swap_colors(&mut self, stream: &mut GshStream) -> Result<()> {
+        self.send_frame(stream, WINDOW_SECONDARY, self.color)
+            .await?;
         self.color = Self::random_color();
-        self.send_frame(messages, WINDOW_PRIMARY, self.color)?;
+        self.send_frame(stream, WINDOW_PRIMARY, self.color).await?;
         Ok(())
     }
 }
 
-impl SimpleService for ColorService {
-    fn main(self, messages: Messages) -> libgsh::Result<()> {
-        <Self as SimpleServiceExt>::main(self, messages)
+impl GshService for ColorService {
+    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 
     fn server_hello(&self) -> ServerHelloAck {
@@ -128,17 +133,17 @@ impl SimpleService for ColorService {
     }
 }
 
-// The `SimpleServiceExt` trait provides a default event loop implementation,
+// The `GshServiceExt` trait provides a default event loop implementation,
 // we only need to implement the `events`, `tick` and `handle_event` methods.
-impl SimpleServiceExt for ColorService {
-    fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
-        self.swap_colors(messages)
+impl GshServiceExt for ColorService {
+    fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
+        self.swap_colors(stream)
     }
 
-    fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+    fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
-            self.swap_colors(messages)?;
+            self.swap_colors(stream)?;
         }
         Ok(())
     }

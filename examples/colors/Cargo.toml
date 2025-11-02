@@ -8,3 +8,4 @@ libgsh = { workspace = true, features = ["server"] }
 rand = "0.9.1"
 log = "0.4.27"
 env_logger = "0.11.8"
+tokio = "1.48.0"

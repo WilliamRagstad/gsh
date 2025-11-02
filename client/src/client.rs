@@ -1,13 +1,17 @@
 use anyhow::{anyhow, Result};
-use libgsh::shared::protocol::{
-    self,
-    server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
-    server_message::ServerEvent,
-    status_update::{Details, StatusType},
-    user_input::{
-        self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction, InputType,
+use libgsh::{
+    client::GshStream,
+    shared::protocol::{
+        self,
+        server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
+        server_message::ServerEvent,
+        status_update::{Details, StatusType},
+        user_input::{
+            self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
+            InputType,
+        },
+        Frame, StatusUpdate, UserInput,
     },
-    Frame, StatusUpdate, UserInput,
 };
 use sdl3::{
     event::{Event, WindowEvent},
@@ -21,8 +25,6 @@ use std::{
     io::Read,
     time::{Duration, Instant},
 };
-
-use crate::network::Messages;
 
 const MAX_FPS: u32 = 60;
 const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64; // in nanoseconds
@@ -46,7 +48,7 @@ pub struct Client {
     /// Mapping from server ID to SDL2 window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
-    messages: Messages,
+    stream: GshStream,
 }
 
 impl Client {
@@ -55,11 +57,9 @@ impl Client {
         video: sdl3::VideoSubsystem,
         format: FrameFormat,
         compression: Option<protocol::server_hello_ack::Compression>,
-        messages: Messages,
-    ) -> Result<Self> {
-        // let sdl_context = sdl3::init().map_err(|e| anyhow!(e))?;
-        // let video_subsystem = sdl_context.video().map_err(|e| anyhow!(e))?;
-        Ok(Client {
+        stream: GshStream,
+    ) -> Self {
+        Client {
             sdl,
             video,
             format,
@@ -67,12 +67,12 @@ impl Client {
             windows: HashMap::new(),
             server_window_to_sdl_window: HashMap::new(),
             sdl_window_to_server_window: HashMap::new(),
-            messages,
-        })
+            stream,
+        }
     }
 
-    pub fn messages(&mut self) -> &mut Messages {
-        &mut self.messages
+    pub fn inner_stream(&mut self) -> &mut GshStream {
+        &mut self.stream
     }
 
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
@@ -127,8 +127,8 @@ impl Client {
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
                 // Remove reverse mapping
                 self.server_window_to_sdl_window.remove(&server_window_id);
-                self.messages
-                    .write_event(protocol::UserInput {
+                self.stream
+                    .send(protocol::UserInput {
                         window_id: server_window_id,
                         kind: protocol::user_input::InputType::WindowEvent as i32,
                         input_event: Some(protocol::user_input::InputEvent::WindowEvent(
@@ -149,8 +149,8 @@ impl Client {
                 );
             } else {
                 // Fallback: send to window 0 if no mapping exists
-                self.messages
-                    .write_event(protocol::UserInput {
+                self.stream
+                    .send(protocol::UserInput {
                         window_id: 0,
                         kind: protocol::user_input::InputType::WindowEvent as i32,
                         input_event: Some(protocol::user_input::InputEvent::WindowEvent(
@@ -193,8 +193,8 @@ impl Client {
         keycode: sdl3::keyboard::Keycode,
         keymod: sdl3::keyboard::Mod,
     ) -> Result<()> {
-        self.messages
-            .write_event(UserInput {
+        self.stream
+            .send(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -248,8 +248,8 @@ impl Client {
             delta_x,
             delta_y
         );
-        self.messages
-            .write_event(UserInput {
+        self.stream
+            .send(UserInput {
                 window_id: server_window_id,
                 kind: InputType::MouseEvent as i32,
                 input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
@@ -274,8 +274,8 @@ impl Client {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self.messages
-            .write_event(UserInput {
+        self.stream
+            .send(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -455,7 +455,7 @@ impl Client {
         let mut last_frame_time = Instant::now();
         'running: loop {
             // Read messages from the server
-            match self.messages.read_event().await {
+            match self.stream.receive().await {
                 Ok(event) => {
                     if !self.handle_server_event(event).await? {
                         break 'running;

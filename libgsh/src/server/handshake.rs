@@ -11,7 +11,6 @@ use rsa::RsaPublicKey;
 use rsa::{pkcs1::DecodeRsaPublicKey, pkcs1v15::Signature};
 use rsa::{pkcs1v15::VerifyingKey, signature::Verifier};
 use sha2::Sha256;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Handshake function for the **server side**.
 /// It reads a `ClientHello` message and sends a `ServerHelloAck` response.

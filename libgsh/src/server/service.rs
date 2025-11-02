@@ -7,6 +7,7 @@ use crate::{
     Result,
 };
 use async_trait::async_trait;
+use std::io::ErrorKind;
 use tokio::io::AsyncWriteExt;
 
 /// A trait for an async service that can be run in a separate thread.
@@ -104,16 +105,16 @@ pub trait GshServiceExt: GshService {
                     log::trace!("Unknown message type, ignoring...");
                 }
                 Err(err) => match err.kind() {
-                    std::io::ErrorKind::UnexpectedEof
-                    | std::io::ErrorKind::ConnectionAborted
-                    | std::io::ErrorKind::ConnectionRefused
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::NotConnected => {
+                    ErrorKind::UnexpectedEof
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::ConnectionRefused
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::NotConnected => {
                         log::trace!("Client disconnected!");
                         self.on_exit(&mut stream).await?;
                         break 'running;
                     }
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut => {
                         // No data available yet, do nothing
                     }
                     _ => {
