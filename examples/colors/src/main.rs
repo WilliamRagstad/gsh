@@ -5,6 +5,7 @@ use libgsh::{
     shared::{
         cert,
         frame::optimize_segments,
+        frame::PrevFrame,
         protocol::{
             client_message::ClientEvent,
             server_hello_ack::{window_settings, FrameFormat, WindowSettings},
@@ -41,10 +42,22 @@ const WINDOW_SECONDARY: u32 = 1;
 
 type Color = (u8, u8, u8);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ColorService {
     color: Color,
-    prev_frame: Vec<u8>,
+    prev_frame: PrevFrame,
+    cur_frame: Vec<u8>,
+}
+
+impl Default for ColorService {
+    fn default() -> Self {
+        let size = FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES;
+        Self {
+            color: (0, 0, 0),
+            prev_frame: PrevFrame::with_capacity(size),
+            cur_frame: Vec::with_capacity(size),
+        }
+    }
 }
 
 impl ColorService {
@@ -54,28 +67,41 @@ impl ColorService {
         window_id: u32,
         color: Color,
     ) -> Result<()> {
-        let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES];
+        let size = FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES;
+        if self.cur_frame.len() != size {
+            self.cur_frame.resize(size, 0);
+        }
         for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
-            frame[i * PIXEL_BYTES] = color.0; // Red
-            frame[i * PIXEL_BYTES + 1] = color.1; // Green
-            frame[i * PIXEL_BYTES + 2] = color.2; // Blue
-            frame[i * PIXEL_BYTES + 3] = 255;
+            self.cur_frame[i * PIXEL_BYTES] = color.0; // Red
+            self.cur_frame[i * PIXEL_BYTES + 1] = color.1; // Green
+            self.cur_frame[i * PIXEL_BYTES + 2] = color.2; // Blue
+            self.cur_frame[i * PIXEL_BYTES + 3] = 255;
         }
         stream
             .send(Frame {
                 window_id,
                 // data: frame.to_vec(),
                 segments: optimize_segments(
-                    &frame,
+                    &self.cur_frame,
                     FRAME_WIDTH,
                     FRAME_HEIGHT,
-                    &mut self.prev_frame,
+                    &self.prev_frame,
                     PIXEL_BYTES,
                 ),
                 width: FRAME_WIDTH as u32,
                 height: FRAME_HEIGHT as u32,
             })
             .await?;
+
+        // Flush once per-frame to ensure the data is sent without flushing per-message.
+        stream.flush().await?;
+
+        // Rotate ping-pong buffers: move cur_frame into prev_frame storage and
+        // reuse the old prev_frame buffer as the next cur_frame to avoid copies.
+        let new_frame = self
+            .prev_frame
+            .update_with_frame(std::mem::take(&mut self.cur_frame));
+        self.cur_frame = new_frame;
         Ok(())
     }
 

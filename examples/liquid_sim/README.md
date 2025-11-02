@@ -1,5 +1,7 @@
 # 🌊 Liquid Simulation
 
+![Preview](preview.gif)
+
 A high-performance CPU-accelerated particle-based fluid simulation that demonstrates the complete GSH rendering pipeline with compression and network transfer.
 
 ## Features
@@ -12,7 +14,6 @@ This example showcases all the steps outlined in the issue:
    - Inter-particle forces
    - Wall collisions with damping
    - Simple fluid-like behavior
-   - **Interactive mouse control**: Move your mouse to push and influence particles in real-time!
 3. **📦 Direct Memory Access**: Direct access to pixel data in clean row-major format
 4. **💾 CPU Rendering**: Renders particles directly into RGBA8 image data
 5. **🚀 Compressed Transfer**: Compresses frames with Zstd before sending through GSH for bandwidth optimization
@@ -52,12 +53,16 @@ The simulation implements:
 
 ### Data Flow
 
-```
-CPU Particle Simulation (rayon) → CPU Rendering (ndarray) → RGBA8 Buffer
-                                                                  ↓
-                                                            Zstd Compression
-                                                                  ↓
-                                                            GSH Network Protocol
+```js
+CPU Particle Simulation (rayon)
+             ↓
+ CPU Rendering (ndarray)
+             ↓
+       RGBA8 Buffer
+             ↓
+     Zstd Compression
+             ↓
+   GSH Network Protocol
 ```
 
 ## Building and Running

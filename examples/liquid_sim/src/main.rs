@@ -65,6 +65,8 @@ pub struct LiquidSimService {
     last_update: Instant,
     mouse_pos: Option<Vec2>,
     prev_mouse_pos: Option<Vec2>,
+    // Reusable output buffer for zstd compression to avoid per-frame allocations
+    compress_buf: Vec<u8>,
 }
 
 impl Default for LiquidSimService {
@@ -76,6 +78,7 @@ impl Default for LiquidSimService {
             last_update: Instant::now(),
             mouse_pos: None,
             prev_mouse_pos: None,
+            compress_buf: Vec::with_capacity(INITIAL_WIDTH * INITIAL_HEIGHT * PIXEL_BYTES),
         }
     }
 }
@@ -315,30 +318,37 @@ impl LiquidSimService {
 
         // Compress the data with Zstd
         use std::io::Write;
-        let mut encoder = libgsh::zstd::stream::Encoder::new(
-            Vec::with_capacity(self.width * self.height * PIXEL_BYTES),
-            ZSTD_COMPRESSION_LEVEL,
-        )?;
+        // Reuse the compression buffer across frames to reduce allocations.
+        let mut out_buf = std::mem::take(&mut self.compress_buf);
+        out_buf.clear();
+        let mut encoder = libgsh::zstd::stream::Encoder::new(out_buf, ZSTD_COMPRESSION_LEVEL)?;
         encoder.write_all(&rgba_data)?;
         let compressed = encoder.finish()?;
+        let compressed_len = compressed.len();
+        let uncompressed_len = rgba_data.len();
+        // Save compressed buffer for reuse (its capacity will be reused next frame).
+        self.compress_buf = compressed;
 
         log::debug!(
             "Frame: {}x{}, uncompressed: {} bytes, compressed: {} bytes ({:.1}% compression)",
             self.width,
             self.height,
-            rgba_data.len(),
-            compressed.len(),
-            (compressed.len() as f32 / rgba_data.len() as f32) * 100.0
+            uncompressed_len,
+            compressed_len,
+            (compressed_len as f32 / uncompressed_len as f32) * 100.0
         );
 
         stream
             .send(Frame {
                 window_id: WINDOW_ID,
-                segments: full_frame_segment(&compressed, self.width, self.height),
+                segments: full_frame_segment(&self.compress_buf, self.width, self.height),
                 width: self.width as u32,
                 height: self.height as u32,
             })
             .await?;
+
+        // Flush once per-frame so we don't flush per-message.
+        stream.flush().await?;
 
         Ok(())
     }

@@ -70,7 +70,13 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> GshCodec<S> {
         buf.extend_from_slice(&length_buf);
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf).await?;
-        self.stream.flush().await?;
+        // NOTE: do not flush on every message — callers should flush once per batch/frame
+        // to avoid syscall overhead and reduce p99 latency.
         Ok(())
+    }
+
+    /// Explicitly flush the underlying stream. Use this after sending a batch/frame.
+    pub async fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush().await
     }
 }

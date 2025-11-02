@@ -78,65 +78,57 @@ pub trait GshServiceExt: GshService {
         self.on_startup(&mut stream).await?;
 
         log::trace!("Starting service main loop...");
-        let mut last_frame_time = std::time::Instant::now();
+        // Use a tokio interval for precise pacing and natural yielding.
+        let mut tick = tokio::time::interval(std::time::Duration::from_nanos(Self::FRAME_TIME_NS));
         'running: loop {
-            // Read stream from the client connection
-            // This is a non-blocking call, so it will return immediately even if no data is available
-            match stream.receive().await {
-                Ok(ClientEvent::StatusUpdate(status_update)) => {
-                    if status_update.kind == StatusType::Exit as i32 {
-                        log::trace!("Client gracefully disconnected!");
-                        stream.get_inner().get_mut().1.send_close_notify();
-                        let _ = stream.get_inner().get_mut().0.flush().await;
-                        let _ = stream.get_inner().get_mut().0.shutdown().await;
-                        self.on_exit(&mut stream).await?;
-                        drop(stream);
-                        break 'running;
+            tokio::select! {
+                res = stream.receive() => {
+                    match res {
+                        Ok(ClientEvent::StatusUpdate(status_update)) => {
+                            if status_update.kind == StatusType::Exit as i32 {
+                                log::trace!("Client gracefully disconnected!");
+                                stream.get_inner().get_mut().1.send_close_notify();
+                                let _ = stream.get_inner().get_mut().0.flush().await;
+                                let _ = stream.get_inner().get_mut().0.shutdown().await;
+                                self.on_exit(&mut stream).await?;
+                                drop(stream);
+                                break 'running;
+                            }
+                            self.on_event(&mut stream, ClientEvent::StatusUpdate(status_update)).await?;
+                        }
+                        Ok(ClientEvent::UserInput(user_input)) => {
+                            self.on_event(&mut stream, ClientEvent::UserInput(user_input)).await?;
+                        }
+                        Ok(other) => {
+                            log::trace!("Received data: {:?}", &other);
+                            log::trace!("Unknown message type, ignoring...");
+                        }
+                        Err(err) => match err.kind() {
+                            ErrorKind::UnexpectedEof
+                            | ErrorKind::ConnectionAborted
+                            | ErrorKind::ConnectionRefused
+                            | ErrorKind::ConnectionReset
+                            | ErrorKind::NotConnected => {
+                                log::trace!("Client disconnected!");
+                                self.on_exit(&mut stream).await?;
+                                break 'running;
+                            }
+                            ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                                // No data available yet, do nothing
+                            }
+                            _ => {
+                                log::error!("Error reading message: {}", err);
+                                self.on_exit(&mut stream).await?;
+                                break 'running;
+                            }
+                        },
                     }
-                    self.on_event(&mut stream, ClientEvent::StatusUpdate(status_update))
-                        .await?;
                 }
-                Ok(ClientEvent::UserInput(user_input)) => {
-                    self.on_event(&mut stream, ClientEvent::UserInput(user_input))
-                        .await?;
+                _ = tick.tick() => {
+                    // Periodic tick; call on_tick which may render and send frames.
+                    self.on_tick(&mut stream).await?;
                 }
-                Ok(other) => {
-                    log::trace!("Received data: {:?}", &other);
-                    log::trace!("Unknown message type, ignoring...");
-                }
-                Err(err) => match err.kind() {
-                    ErrorKind::UnexpectedEof
-                    | ErrorKind::ConnectionAborted
-                    | ErrorKind::ConnectionRefused
-                    | ErrorKind::ConnectionReset
-                    | ErrorKind::NotConnected => {
-                        log::trace!("Client disconnected!");
-                        self.on_exit(&mut stream).await?;
-                        break 'running;
-                    }
-                    ErrorKind::WouldBlock | ErrorKind::TimedOut => {
-                        // No data available yet, do nothing
-                    }
-                    _ => {
-                        log::error!("Error reading message: {}", err);
-                        self.on_exit(&mut stream).await?;
-                        break 'running;
-                    }
-                },
-            };
-
-            // Perform periodic tasks in the service
-            self.on_tick(&mut stream).await?;
-
-            // Sleep for the tick interval to maintain the desired FPS
-            let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
-            if elapsed_time < Self::FRAME_TIME_NS {
-                tokio::time::sleep(std::time::Duration::from_nanos(
-                    Self::FRAME_TIME_NS - elapsed_time,
-                ))
-                .await;
             }
-            last_frame_time = std::time::Instant::now();
         }
         log::trace!("Service main loop exited.");
         Ok(())
