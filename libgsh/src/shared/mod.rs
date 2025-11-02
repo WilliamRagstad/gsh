@@ -1,6 +1,7 @@
-pub mod r#async;
 pub mod auth;
-pub mod sync;
+pub mod cert;
+pub mod codec;
+pub mod frame;
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));

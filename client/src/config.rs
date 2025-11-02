@@ -1,13 +1,15 @@
-use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
-use std::{collections::HashMap, io::Read};
-
 use homedir::my_home;
-use libgsh::cert;
-use libgsh::rsa::rand_core::OsRng;
-use libgsh::rsa::{RsaPrivateKey, RsaPublicKey};
+use libgsh::{
+    rsa::{rand_core::OsRng, RsaPrivateKey, RsaPublicKey},
+    shared::cert,
+};
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 fn gsh_dir() -> PathBuf {
     let mut path = my_home()
@@ -27,7 +29,7 @@ pub struct KnownHost {
 }
 
 impl KnownHost {
-    /// Check if the provided fingerprints contains all of the known fingerprints
+    /// Check if the provided fingerprints contains all the known fingerprints
     pub fn compare(&self, fingerprints: &[Vec<u8>]) -> bool {
         self.fingerprints
             .iter()

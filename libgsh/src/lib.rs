@@ -4,21 +4,22 @@
 //! It includes support for both synchronous and asynchronous services, as well as TLS support using Rustls.
 //! It also provides a simple server implementation for handling client connections and managing the application service.
 
+// #[cfg(all(feature = "client", feature = "server"))]
+// compile_error!("Features 'client' and 'server' cannot be enabled at the same time.");
+
 pub use async_trait;
 pub use rcgen;
 pub use rsa;
 pub use sha2;
 pub use tokio;
-pub use tokio_rustls;
+pub use tokio_rustls::{self, rustls::ServerConfig};
 pub use zstd;
 
-#[cfg(not(feature = "client"))]
-pub mod r#async;
-pub mod cert;
-pub mod frame;
+#[cfg(all(not(feature = "server"), feature = "client"))]
+pub mod client;
+#[cfg(all(not(feature = "client"), feature = "server"))]
+pub mod server;
 pub mod shared;
-#[cfg(not(feature = "client"))]
-pub mod simple;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

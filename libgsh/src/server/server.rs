@@ -1,11 +1,8 @@
-use super::service::AsyncService;
-use crate::r#async::Messages;
-use crate::shared::protocol::client_hello;
-use crate::Result;
+use super::GshStream;
+use crate::{server::service::GshService, shared::protocol::client_hello, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio_rustls::rustls::ServerConfig;
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 
 const DEFAULT_PORT: u16 = 1122;
 
@@ -22,16 +19,16 @@ const DEFAULT_PORT: u16 = 1122;
 /// server.serve()?
 /// ```
 #[derive(Debug, Clone)]
-pub struct AsyncServer<ServiceT: AsyncService> {
+pub struct GshServer<ServiceT: GshService> {
     service: ServiceT,
     config: ServerConfig,
 }
 
-impl<ServiceT: AsyncService> AsyncServer<ServiceT>
+impl<ServiceT: GshService> GshServer<ServiceT>
 where
     ServiceT: Send + Sync + 'static,
 {
-    /// Creates a new `AsyncServer` instance with the provided server configuration.\
+    /// Creates a new `GshServer` instance with the provided server configuration.\
     /// The `ServerConfig` is used to configure the TLS settings for the server.
     pub fn new(service: ServiceT, config: ServerConfig) -> Self {
         Self { service, config }
@@ -64,8 +61,8 @@ where
             let service = self.service.clone();
             tokio::spawn(async move {
                 let tls_stream = tls_acceptor.accept(stream).await.unwrap();
-                let messages = Messages::new(tls_stream);
-                if let Err(e) = Self::handle_client(service, messages, addr).await {
+                let stream = GshStream::new(tls_stream);
+                if let Err(e) = Self::handle_client(service, stream, addr).await {
                     log::error!("Service error {}: {}", addr, e);
                 }
                 println!("- Client disconnected from {}", addr);
@@ -77,11 +74,11 @@ where
     /// This function performs the TLS handshake and starts the service's main event loop.\
     async fn handle_client(
         service: ServiceT,
-        mut messages: Messages,
+        mut stream: GshStream,
         addr: std::net::SocketAddr,
     ) -> Result<()> {
-        let client = crate::shared::r#async::handshake_server(
-            &mut messages,
+        let client = super::handshake::handshake(
+            &mut stream,
             &[crate::shared::PROTOCOL_VERSION],
             service.server_hello(),
             service.auth_verifier(),
@@ -97,7 +94,7 @@ where
             addr.port()
         );
 
-        service.main(messages).await?;
+        service.main(stream).await?;
         Ok(())
     }
 }

@@ -1,5 +1,4 @@
 //! This module provides the `AuthProvider` trait, which is used to define authentication providers.
-
 use rsa::{pkcs1v15::Signature, RsaPublicKey};
 
 /// The `AuthProvider` trait defines the interface for client authentication providers.\
@@ -34,4 +33,16 @@ pub trait SignatureVerifier: Send + Sync + 'static {
 pub enum AuthVerifier {
     Password(Box<dyn PasswordVerifier>),
     Signature(Box<dyn SignatureVerifier>),
+}
+
+impl From<Box<dyn PasswordVerifier>> for AuthVerifier {
+    fn from(verifier: Box<dyn PasswordVerifier>) -> Self {
+        AuthVerifier::Password(verifier)
+    }
+}
+
+impl From<Box<dyn SignatureVerifier>> for AuthVerifier {
+    fn from(verifier: Box<dyn SignatureVerifier>) -> Self {
+        AuthVerifier::Signature(verifier)
+    }
 }

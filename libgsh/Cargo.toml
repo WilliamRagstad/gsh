@@ -34,5 +34,5 @@ zstd = { version = "0.13.3", features = ["zstdmt"] }
 prost-build = "0.13.5"
 
 [features]
+server = []
 client = []
-default = []

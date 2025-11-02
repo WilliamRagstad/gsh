@@ -1,17 +1,17 @@
 use libgsh::{
-    cert,
     rsa::RsaPublicKey,
+    server::{
+        server::GshServer,
+        service::{SimpleService, SimpleServiceExt},
+        Messages,
+    },
     shared::{
         auth::{AuthVerifier, SignatureVerifier},
+        cert,
         protocol::{
             server_hello_ack::{AuthMethod, FrameFormat, SignatureMethod},
             ServerHelloAck,
         },
-    },
-    simple::{
-        server::SimpleServer,
-        service::{SimpleService, SimpleServiceExt},
-        Messages,
     },
 };
 use rand::RngCore;
@@ -23,8 +23,8 @@ fn main() {
         .format_target(false)
         .format_timestamp(None)
         .init();
-    let (key, private_key) = libgsh::cert::self_signed(&["localhost"]).unwrap();
-    let config = libgsh::tokio_rustls::rustls::ServerConfig::builder()
+    let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
+    let config = libgsh::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();

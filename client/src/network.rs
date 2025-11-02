@@ -1,11 +1,15 @@
-use std::sync::Arc;
-
+use crate::{auth::ClientAuthProvider, config};
 use dialoguer::Confirm;
-use libgsh::sha2::{Digest, Sha256};
-use libgsh::shared::{
-    protocol::{self, client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck},
-    r#async::AsyncMessageCodec,
+use libgsh::{
+    sha2::{Digest, Sha256},
+    shared::{
+        codec::{GshStreamClient, GshStreamServer},
+        protocol::{
+            client_hello::MonitorInfo, status_update::StatusType, ServerHelloAck, StatusUpdate,
+        },
+    },
 };
+use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_rustls::rustls::{
     self,
@@ -13,24 +17,18 @@ use tokio_rustls::rustls::{
     crypto::{ring as provider, CryptoProvider},
     time_provider,
 };
-// use std::{net::TcpStream, sync::Arc};
-use tokio_rustls::{client::TlsStream, TlsConnector};
+use tokio_rustls::TlsConnector;
 
-use crate::{auth::ClientAuthProvider, config};
-
-// pub type Messages = MessageCodec<StreamOwned<ClientConnection, TcpStream>>;
-pub type Messages = AsyncMessageCodec<TlsStream<TcpStream>>;
-
-pub async fn shutdown_tls(messages: &mut Messages) -> anyhow::Result<()> {
+pub async fn shutdown_tls(stream: &mut GshStreamServer) -> anyhow::Result<()> {
     log::trace!("Exiting gracefully...");
-    messages.get_stream().get_mut().1.send_close_notify();
-    messages
-        .write_event(protocol::StatusUpdate {
+    stream.get_inner().get_mut().1.send_close_notify();
+    stream
+        .send(StatusUpdate {
             kind: StatusType::Exit as i32,
             details: None,
         })
         .await?;
-    messages.get_stream().get_mut().0.shutdown().await?;
+    stream.get_inner().get_mut().0.shutdown().await?;
     log::trace!("Connection closed.");
     Ok(())
 }
@@ -121,7 +119,7 @@ pub async fn connect_tls(
     mut known_hosts: config::KnownHosts,
     id_files: config::IdFiles,
     id_override: Option<String>,
-) -> anyhow::Result<(ServerHelloAck, Messages)> {
+) -> anyhow::Result<(ServerHelloAck, GshStreamClient)> {
     let server_name = host.to_string().try_into()?;
     let tls_config = Arc::new(tls_config(insecure)?);
     let tls_connector = TlsConnector::from(tls_config);
@@ -137,8 +135,8 @@ pub async fn connect_tls(
             return Err(anyhow::anyhow!("Host verification failed."));
         }
     }
-    let mut messages = Messages::new(tls_stream);
-    let hello = libgsh::shared::r#async::handshake_client(
+    let mut messages = GshStreamClient::new(tls_stream);
+    let hello = libgsh::client::handshake(
         &mut messages,
         monitors,
         ClientAuthProvider::new(known_hosts, id_files, id_override),

@@ -1,12 +1,12 @@
 use libgsh::{
     async_trait::async_trait,
-    cert,
-    frame::full_frame_segment,
-    r#async::{
+    server::{
         server::AsyncServer,
         service::{AsyncService, AsyncServiceExt},
         Messages,
     },
+    shared::cert,
+    shared::frame::full_frame_segment,
     shared::protocol::{
         client_message,
         server_hello_ack::{self, window_settings, FrameFormat, WindowSettings, ZstdCompression},

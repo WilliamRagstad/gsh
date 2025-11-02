@@ -17,7 +17,7 @@ fn main() {
         .format_target(false)
         .format_timestamp(None)
         .init();
-    let (key, private_key) = libgsh::cert::self_signed(&["localhost"]).unwrap();
+    let (key, private_key) = libgsh::shared::cert::self_signed(&["localhost"]).unwrap();
     let config = libgsh::tokio_rustls::rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)

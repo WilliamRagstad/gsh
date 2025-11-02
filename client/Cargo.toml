@@ -11,7 +11,7 @@ webpki-roots = "0.26.8"
 # NOTE: The SDL3 Rust binding crate and feature names may differ; if this crate name/version
 # doesn't exist in your registry, update to the correct crate (for example `sdl3`, `sdl3-sys`,
 # or a specific git repo). This change is the first step to migrate code to SDL3.
-# Use sdl3 with a couple features enabled; adjust if you need different feature set.
+# Use sdl3 with a couple of features enabled; adjust if you need different feature set.
 sdl3 = { version = "0.16.1", features = [
 	"build-from-source",
 	"static-link",

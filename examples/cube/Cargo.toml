@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-libgsh = { workspace = true }
+libgsh = { workspace = true, features = ["server"] }
 vek = "0.17.1"
 log = "0.4.27"
 env_logger = "0.11.8"
