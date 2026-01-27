@@ -45,7 +45,7 @@ pub struct Client {
     compression: Option<protocol::server_hello_ack::Compression>,
     /// Mapping from SDL window ID to SDL canvas video::Window
     windows: HashMap<WindowID, SdlWindow>,
-    /// Mapping from server ID to SDL2 window ID
+    /// Mapping from server ID to SDL window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
     stream: GshStream,
@@ -478,7 +478,7 @@ impl Client {
                 },
             };
 
-            // Events from SDL2 windows
+            // Events from SDL windows
             for event in event_pump.poll_iter() {
                 if !self.handle_window_event(event).await? {
                     break 'running;

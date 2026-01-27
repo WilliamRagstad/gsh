@@ -156,7 +156,7 @@ async fn main() {
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
         client
-            .create_window(&default_window(host))
+            .create_window(&default_window(&host))
             .unwrap_or_else(|e| {
                 log::error!("Failed to create default window: {}", e);
                 exit(1);
@@ -204,7 +204,7 @@ fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {
     monitors
 }
 
-fn default_window(host: String) -> WindowSettings {
+fn default_window(host: &str) -> WindowSettings {
     WindowSettings {
         window_id: 0,
         monitor_id: None,

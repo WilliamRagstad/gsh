@@ -78,7 +78,6 @@ If you want to contribute to the development of `gsh`, follow these steps:
   - In the "Workloads" tab enable "Desktop development with C++"
   - Click Modify at the bottom right
 - Install [`protoc`](https://github.com/protocolbuffers/protobuf/releases/) version 30.2 *(`shared` dependency)*
-- Install [`cmake`](https://cmake.org/download/) version 3.31.7 *(`sdl2` dependency)*
 - Clone this repository and `cd gsh`
 
 Manual system test for the `colors` example:
