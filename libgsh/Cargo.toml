@@ -33,7 +33,3 @@ spin_sleep = "1.3"
 
 [build-dependencies]
 prost-build = "0.13.5"
-
-[features]
-server = []
-client = []

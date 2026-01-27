@@ -15,9 +15,7 @@ pub use tokio;
 pub use tokio_rustls::{self, rustls::ServerConfig};
 pub use zstd;
 
-#[cfg(all(not(feature = "server"), feature = "client"))]
 pub mod client;
-#[cfg(all(not(feature = "client"), feature = "server"))]
 pub mod server;
 pub mod shared;
 
