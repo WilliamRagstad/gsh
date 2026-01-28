@@ -1,6 +1,8 @@
 use auth::ClientAuthProvider;
-use clap::{Parser, Subcommand};
+use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use client::Client;
+use env_logger::fmt::WriteStyle;
 use libgsh::{
     rsa::{pkcs1v15::VerifyingKey, signature::Verifier},
     sha2::Sha256,
@@ -62,12 +64,25 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    let color_choice = color_choice();
+
     // Show info logs by default so input events are visible during interactive use
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .write_style(match color_choice {
+            ColorChoice::Always => WriteStyle::Always,
+            ColorChoice::Never => WriteStyle::Never,
+            ColorChoice::Auto => WriteStyle::Auto,
+        })
         .format_line_number(true)
         .format_timestamp(None)
         .init();
-    let args = Args::parse();
+
+    // Force colored help/errors by default (unless NO_COLOR / TERM=dumb).
+    let mut cmd = Args::command();
+    cmd = cmd.color(color_choice);
+    cmd = cmd.styles(clap_styles());
+    let matches = cmd.get_matches();
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     let known_hosts = config::KnownHosts::load();
     let mut id_files = config::IdFiles::load();
@@ -176,6 +191,39 @@ async fn main() {
     }
     log::info!("Shutting down client...");
     let _ = network::shutdown_tls(client.inner_stream()).await;
+}
+
+fn color_choice() -> ColorChoice {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return ColorChoice::Never;
+    }
+    if matches!(std::env::var("TERM").as_deref(), Ok("dumb")) {
+        return ColorChoice::Never;
+    }
+    ColorChoice::Always
+}
+
+fn clap_styles() -> Styles {
+    Styles::styled()
+        .usage(
+            AnsiColor::Yellow
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .header(
+            AnsiColor::Yellow
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .literal(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default().effects(Effects::BOLD))
+        .error(AnsiColor::Red.on_default().effects(Effects::BOLD))
+        .valid(
+            AnsiColor::Green
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .placeholder(AnsiColor::White.on_default())
 }
 
 fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {
