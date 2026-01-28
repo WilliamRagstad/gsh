@@ -7,7 +7,7 @@ edition = "2021"
 libgsh = { workspace = true }
 clap = { version = "4.5.35", features = ["derive"] }
 webpki-roots = "0.26.8"
-sdl3 = { version = "0.16.1", features = [
+sdl3 = { version = "0.17.3", features = [
 	"build-from-source",
 	"static-link",
 	"image",
