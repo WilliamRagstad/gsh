@@ -1,7 +1,7 @@
 use libgsh::{
     async_trait::async_trait,
     rsa::RsaPublicKey,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
         auth::{AuthVerifier, SignatureVerifier},
         cert,
@@ -47,7 +47,7 @@ impl AuthService {
 
 #[async_trait]
 impl GshService for AuthService {
-    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
     }
 

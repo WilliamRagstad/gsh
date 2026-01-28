@@ -1,7 +1,7 @@
 use env_logger::Env;
 use libgsh::{
     async_trait::async_trait,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
         cert,
         frame::full_frame_segment,
@@ -66,7 +66,7 @@ impl Default for CubeService {
 }
 
 impl CubeService {
-    async fn send_frame(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn send_frame(&mut self, stream: &mut ServerStream) -> Result<()> {
         let frame = self.draw_cube(4);
         stream
             .send(Frame {
@@ -191,7 +191,7 @@ impl CubeService {
 
 #[async_trait]
 impl GshService for CubeService {
-    async fn main(self, stream: GshStream) -> Result<()> {
+    async fn main(self, stream: ServerStream) -> Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
     }
 
@@ -220,15 +220,15 @@ impl GshService for CubeService {
 impl GshServiceExt for CubeService {
     const MAX_FPS: u32 = MAX_FPS;
 
-    async fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
         self.send_frame(stream).await
     }
 
-    async fn on_tick(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> Result<()> {
         self.send_frame(stream).await
     }
 
-    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         log::trace!("Got event: {:?}", event);
         if let ClientEvent::UserInput(input) = &event {
             if let InputEvent::WindowEvent(window_event) = input.input_event.unwrap() {

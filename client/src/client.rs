@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use libgsh::{
-    client::GshStream,
+    client::ClientStream,
     shared::protocol::{
         self,
         server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
@@ -48,7 +48,7 @@ pub struct Client {
     /// Mapping from server ID to SDL window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
-    stream: GshStream,
+    stream: ClientStream,
 }
 
 impl Client {
@@ -57,7 +57,7 @@ impl Client {
         video: sdl3::VideoSubsystem,
         format: FrameFormat,
         compression: Option<protocol::server_hello_ack::Compression>,
-        stream: GshStream,
+        stream: ClientStream,
     ) -> Self {
         Client {
             sdl,
@@ -71,7 +71,7 @@ impl Client {
         }
     }
 
-    pub fn inner_stream(&mut self) -> &mut GshStream {
+    pub fn inner_stream(&mut self) -> &mut ClientStream {
         &mut self.stream
     }
 

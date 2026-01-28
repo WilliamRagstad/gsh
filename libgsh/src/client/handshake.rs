@@ -1,4 +1,4 @@
-use super::GshStream;
+use super::ClientStream;
 use crate::shared::{
     auth::AuthProvider,
     protocol::{
@@ -18,7 +18,7 @@ use rsa::{pkcs1::EncodeRsaPublicKey, RsaPublicKey};
 /// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
 /// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
 pub async fn handshake<A>(
-    stream: &mut GshStream,
+    stream: &mut ClientStream,
     monitors: Vec<MonitorInfo>,
     mut auth_provider: A,
     host: &str,

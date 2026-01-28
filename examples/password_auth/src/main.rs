@@ -1,6 +1,6 @@
 use libgsh::{
     async_trait::async_trait,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
         auth::{AuthVerifier, PasswordVerifier},
         protocol::{server_hello_ack, ServerHelloAck},
@@ -54,7 +54,7 @@ impl GshService for AuthService {
         })))
     }
 
-    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
         // Proxy to the default implementation provided by the extension trait.
         <Self as GshServiceExt>::main(self, stream).await
     }

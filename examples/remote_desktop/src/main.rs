@@ -1,6 +1,6 @@
 use libgsh::{
     async_trait::async_trait,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::cert,
     shared::frame::full_frame_segment,
     shared::protocol::{
@@ -110,7 +110,7 @@ impl GshService for RdpService {
         }
     }
 
-    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
     }
 }
@@ -119,14 +119,14 @@ impl GshService for RdpService {
 impl GshServiceExt for RdpService {
     async fn on_event(
         &mut self,
-        _stream: &mut GshStream,
+        _stream: &mut ServerStream,
         event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
         log::info!("Received event: {:?}", event);
         Ok(())
     }
 
-    async fn on_tick(&mut self, stream: &mut GshStream) -> libgsh::Result<()> {
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
             stream.send(self.get_frame()?).await?;
             self.last_frame = std::time::Instant::now();
@@ -135,7 +135,7 @@ impl GshServiceExt for RdpService {
         Ok(())
     }
 
-    async fn on_startup(&mut self, stream: &mut GshStream) -> libgsh::Result<()> {
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
         stream.send(self.get_frame()?).await?;
         log::debug!("Sent initial frame");
         Ok(())

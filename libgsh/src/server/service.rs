@@ -1,4 +1,4 @@
-use super::GshStream;
+use super::ServerStream;
 use crate::{
     shared::{
         auth::AuthVerifier,
@@ -28,7 +28,7 @@ pub trait GshService: Clone + Send + Sync + 'static {
 
     /// Main event loop for the service.\
     /// This is running in a separate thread, handling client events and sending frames back to the client.
-    async fn main(self, stream: GshStream) -> Result<()>
+    async fn main(self, stream: ServerStream) -> Result<()>
     where
         Self: Sized;
 }
@@ -44,34 +44,34 @@ pub trait GshServiceExt: GshService {
     const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
     /// Start up function for the service.\
     /// This is called when the service is started and can be used to perform any necessary initialization.
-    async fn on_startup(&mut self, _stream: &mut GshStream) -> Result<()> {
+    async fn on_startup(&mut self, _stream: &mut ServerStream) -> Result<()> {
         Ok(())
     }
 
     /// Handle periodic tasks in the service.\
     /// This is called each iteration in the default `main` implementation event loop to perform any necessary updates.
-    async fn on_tick(&mut self, _stream: &mut GshStream) -> Result<()> {
+    async fn on_tick(&mut self, _stream: &mut ServerStream) -> Result<()> {
         Ok(())
     }
 
     /// Handle client events in the service.\
     /// This is called for each `ClientEvent` received in the default `main` implementation event loop.
     #[allow(unused_variables)]
-    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         log::trace!("Got event: {:?}", event);
         Ok(())
     }
 
     /// Graceful exit of the service.\
     /// This is called when the service receives a `StatusUpdate` event with `Exit` status.
-    async fn on_exit(&mut self, _stream: &mut GshStream) -> Result<()> {
+    async fn on_exit(&mut self, _stream: &mut ServerStream) -> Result<()> {
         log::trace!("Exiting service...");
         Ok(())
     }
 
     /// Main event loop for the service.\
     /// This is running in a separate thread, handling client events and sending frames back to the client.
-    async fn main(mut self, mut stream: GshStream) -> Result<()>
+    async fn main(mut self, mut stream: ServerStream) -> Result<()>
     where
         Self: Sized,
     {

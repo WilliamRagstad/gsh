@@ -2,7 +2,6 @@ use crate::shared::codec::GshCodec;
 use crate::shared::protocol::{client_message::ClientEvent, ClientMessage, ServerMessage};
 use prost::Message;
 use std::io::Result;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 
@@ -15,9 +14,9 @@ pub use server::GshServer;
 pub use service::{GshService, GshServiceExt};
 
 /// Asynchronous message codec for the server `TlsStream` over a `TcpStream`.\
-pub type GshStream = GshCodec<TlsStream<TcpStream>>;
+pub type ServerStream = GshCodec<TlsStream<TcpStream>>;
 
-impl<S: AsyncRead + AsyncWrite + Send + Unpin> GshCodec<S> {
+impl ServerStream {
     pub async fn send(&mut self, message: impl Into<ServerMessage>) -> Result<()> {
         self.write_internal(message.into()).await
     }

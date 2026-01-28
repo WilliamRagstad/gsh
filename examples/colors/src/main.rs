@@ -1,7 +1,7 @@
 use env_logger::Env;
 use libgsh::{
     async_trait::async_trait,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
         cert,
         frame::optimize_segments,
@@ -63,7 +63,7 @@ impl Default for ColorService {
 impl ColorService {
     async fn send_frame(
         &mut self,
-        stream: &mut GshStream,
+        stream: &mut ServerStream,
         window_id: u32,
         color: Color,
     ) -> Result<()> {
@@ -112,7 +112,7 @@ impl ColorService {
         (r, g, b)
     }
 
-    async fn swap_colors(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn swap_colors(&mut self, stream: &mut ServerStream) -> Result<()> {
         self.send_frame(stream, WINDOW_SECONDARY, self.color)
             .await?;
         self.color = Self::random_color();
@@ -123,7 +123,7 @@ impl ColorService {
 
 #[async_trait]
 impl GshService for ColorService {
-    async fn main(self, stream: GshStream) -> libgsh::Result<()> {
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
     }
 
@@ -166,11 +166,11 @@ impl GshService for ColorService {
 // we only need to implement the `events`, `tick` and `handle_event` methods.
 #[async_trait]
 impl GshServiceExt for ColorService {
-    async fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
         self.swap_colors(stream).await
     }
 
-    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
             self.swap_colors(stream).await?;

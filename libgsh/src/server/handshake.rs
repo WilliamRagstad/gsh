@@ -1,4 +1,4 @@
-use super::GshStream;
+use super::ServerStream;
 use crate::shared::{
     auth::AuthVerifier,
     protocol::{
@@ -16,7 +16,7 @@ use sha2::Sha256;
 /// It reads a `ClientHello` message and sends a `ServerHelloAck` response.
 /// If the client version is not compatible, it sends a `StatusUpdate` message and returns an error.
 pub async fn handshake(
-    stream: &mut GshStream,
+    stream: &mut ServerStream,
     supported_protocol_versions: &[u32],
     server_hello: ServerHelloAck,
     auth_verifier: Option<AuthVerifier>,

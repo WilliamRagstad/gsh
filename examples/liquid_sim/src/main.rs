@@ -2,7 +2,7 @@ use env_logger::Env;
 use glam::Vec2;
 use libgsh::{
     async_trait::async_trait,
-    server::{GshServer, GshService, GshServiceExt, GshStream},
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::cert,
     shared::frame::full_frame_segment,
     shared::protocol::{
@@ -313,7 +313,7 @@ impl LiquidSimService {
         self.render_particles()
     }
 
-    async fn send_frame(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn send_frame(&mut self, stream: &mut ServerStream) -> Result<()> {
         let rgba_data = self.simulate_and_render();
 
         // Compress the data with Zstd
@@ -363,7 +363,7 @@ impl LiquidSimService {
 
 #[async_trait]
 impl GshService for LiquidSimService {
-    async fn main(self, stream: GshStream) -> Result<()> {
+    async fn main(self, stream: ServerStream) -> Result<()> {
         <Self as GshServiceExt>::main(self, stream).await
     }
 
@@ -394,16 +394,16 @@ impl GshService for LiquidSimService {
 impl GshServiceExt for LiquidSimService {
     const MAX_FPS: u32 = MAX_FPS;
 
-    async fn on_startup(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
         log::info!("Starting liquid simulation...");
         self.send_frame(stream).await
     }
 
-    async fn on_tick(&mut self, stream: &mut GshStream) -> Result<()> {
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> Result<()> {
         self.send_frame(stream).await
     }
 
-    async fn on_event(&mut self, stream: &mut GshStream, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = &event {
             // Handle mouse events
             if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {

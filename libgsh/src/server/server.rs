@@ -1,4 +1,4 @@
-use super::GshStream;
+use super::ServerStream;
 use crate::{server::service::GshService, shared::protocol::client_hello, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -61,7 +61,7 @@ where
             let service = self.service.clone();
             tokio::spawn(async move {
                 let tls_stream = tls_acceptor.accept(stream).await.unwrap();
-                let stream = GshStream::new(tls_stream);
+                let stream = ServerStream::new(tls_stream);
                 if let Err(e) = Self::handle_client(service, stream, addr).await {
                     log::error!("Service error {}: {}", addr, e);
                 }
@@ -74,7 +74,7 @@ where
     /// This function performs the TLS handshake and starts the service's main event loop.\
     async fn handle_client(
         service: ServiceT,
-        mut stream: GshStream,
+        mut stream: ServerStream,
         addr: std::net::SocketAddr,
     ) -> Result<()> {
         let client = super::handshake::handshake(
