@@ -51,8 +51,11 @@ enum Command {
         #[clap(subcommand)]
         command: IdCommand,
     },
-    /// List all known hosts
-    ListHosts,
+    /// Manage known hosts
+    Host {
+        #[clap(subcommand)]
+        command: HostCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -69,6 +72,12 @@ enum IdCommand {
         /// The name of the ID file
         name: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum HostCommand {
+    /// List all known hosts
+    List,
 }
 
 #[tokio::main]
@@ -130,12 +139,14 @@ async fn main() {
                     }
                 }
             },
-            Command::ListHosts => {
-                println!("Known hosts:");
-                for host in known_hosts.hosts {
-                    println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
+            Command::Host { command } => match command {
+                HostCommand::List => {
+                    println!("Known hosts:");
+                    for host in known_hosts.hosts {
+                        println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
+                    }
                 }
-            }
+            },
         }
         return;
     }
