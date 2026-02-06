@@ -17,11 +17,13 @@ use libgsh::{
         },
     },
 };
+use std::io::IsTerminal;
 use std::process::exit;
 
 mod auth;
 mod client;
 mod config;
+mod display;
 mod network;
 
 #[derive(Parser, Debug)]
@@ -113,10 +115,18 @@ async fn main() {
                     println!("ID file created at {} for {}", path.display(), name);
                 }
                 IdCommand::List => {
-                    println!("ID files:");
-                    for (id_name, id_file) in id_files.files() {
-                        println!("- {}: {}", id_name, id_file.display());
-                    }
+                    let mut rows: Vec<(String, String)> = id_files
+                        .files()
+                        .into_iter()
+                        .map(|(name, path)| (name, path.display().to_string()))
+                        .collect();
+                    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    let table_rows: Vec<Vec<String>> = rows
+                        .into_iter()
+                        .map(|(name, path)| vec![name, path])
+                        .collect();
+                    display::print_table(&["NAME", "PATH"], &table_rows, color_choice);
                 }
                 IdCommand::Verify { name } => {
                     const MESSAGE: &[u8] = b"test";
@@ -141,10 +151,22 @@ async fn main() {
             },
             Command::Host { command } => match command {
                 HostCommand::List => {
-                    println!("Known hosts:");
-                    for host in known_hosts.hosts {
-                        println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
-                    }
+                    let mut rows: Vec<(String, String, String)> = known_hosts
+                        .hosts
+                        .iter()
+                        .map(|h| {
+                            let fp = display::fingerprints_summary(&h.fingerprints);
+                            let id = h.id_file_ref.clone().unwrap_or_else(|| "-".to_string());
+                            (h.host.clone(), id, fp)
+                        })
+                        .collect();
+                    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    let table_rows: Vec<Vec<String>> = rows
+                        .into_iter()
+                        .map(|(host, id, fp)| vec![host, id, fp])
+                        .collect();
+                    display::print_table(&["HOST", "ID", "FINGERPRINT"], &table_rows, color_choice);
                 }
             },
         }
@@ -220,6 +242,9 @@ fn color_choice() -> ColorChoice {
         return ColorChoice::Never;
     }
     if matches!(std::env::var("TERM").as_deref(), Ok("dumb")) {
+        return ColorChoice::Never;
+    }
+    if !std::io::stdout().is_terminal() {
         return ColorChoice::Never;
     }
     ColorChoice::Always
