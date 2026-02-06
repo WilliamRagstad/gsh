@@ -2,6 +2,7 @@
   <img src="assets/logo.png" alt="Graphical Shell Logo" height="130">
 </div>
 <p align="center">
+	<img alt="No AI" src="https://img.shields.io/badge/No-AI-red?style=flat-square">
 	<a href="https://github.com/WilliamRagstad/gsh/actions"><img src="https://img.shields.io/github/actions/workflow/status/WilliamRagstad/gsh/rust.yml?style=flat-square&color=6b0" alt="Build Status"></a>
     <img src="https://img.shields.io/badge/built_with-Rust-cf6242.svg?style=flat-square" alt="Built with Rust">
     <a href="https://github.com/WilliamRagstad/gsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-009faf.svg?style=flat-square" alt="License"></a>
