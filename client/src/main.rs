@@ -1,6 +1,6 @@
 use auth::ClientAuthProvider;
-use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 use client::Client;
 use env_logger::fmt::WriteStyle;
 use libgsh::{
@@ -46,17 +46,26 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Create a new named ID file
-    NewId {
-        /// The name of the ID file
-        name: String,
+    /// Manage ID files
+    Id {
+        #[clap(subcommand)]
+        command: IdCommand,
     },
     /// List all known hosts
     ListHosts,
+}
+
+#[derive(Subcommand, Debug)]
+enum IdCommand {
+    /// Create a new named ID file
+    New {
+        /// The name of the ID file
+        name: String,
+    },
     /// List all IDs
-    ListIds,
+    List,
     /// Verify the ID files
-    VerifyId {
+    Verify {
         /// The name of the ID file
         name: String,
     },
@@ -89,40 +98,42 @@ async fn main() {
 
     if let Some(command) = args.command {
         match command {
-            Command::NewId { name } => {
-                let path = id_files.create_id_file(&name);
-                println!("ID file created at {} for {}", path.display(), name);
-            }
+            Command::Id { command } => match command {
+                IdCommand::New { name } => {
+                    let path = id_files.create_id_file(&name);
+                    println!("ID file created at {} for {}", path.display(), name);
+                }
+                IdCommand::List => {
+                    println!("ID files:");
+                    for (id_name, id_file) in id_files.files() {
+                        println!("- {}: {}", id_name, id_file.display());
+                    }
+                }
+                IdCommand::Verify { name } => {
+                    const MESSAGE: &[u8] = b"test";
+                    let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
+                    match provider.signature("", MESSAGE) {
+                        Some((signature, pub_key)) => {
+                            log::trace!("Public key: {:?}", pub_key);
+                            log::trace!("Signature: {:?}", signature);
+                            let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
+                            if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
+                                log::error!("Signature verification failed: {}", err);
+                                println!("Signature verification failed!");
+                            } else {
+                                println!("Successfully verified ID!");
+                            }
+                        }
+                        None => {
+                            println!("Invalid ID file or no public key found.");
+                        }
+                    }
+                }
+            },
             Command::ListHosts => {
                 println!("Known hosts:");
                 for host in known_hosts.hosts {
                     println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
-                }
-            }
-            Command::ListIds => {
-                println!("ID files:");
-                for (id_name, id_file) in id_files.files() {
-                    println!("- {}: {}", id_name, id_file.display());
-                }
-            }
-            Command::VerifyId { name } => {
-                const MESSAGE: &[u8] = b"test";
-                let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
-                match provider.signature("", MESSAGE) {
-                    Some((signature, pub_key)) => {
-                        log::trace!("Public key: {:?}", pub_key);
-                        log::trace!("Signature: {:?}", signature);
-                        let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
-                        if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
-                            log::error!("Signature verification failed: {}", err);
-                            println!("Signature verification failed!");
-                        } else {
-                            println!("Successfully verified ID!");
-                        }
-                    }
-                    None => {
-                        println!("Invalid ID file or no public key found.");
-                    }
                 }
             }
         }
@@ -140,7 +151,7 @@ async fn main() {
     });
 
     let host = args.host.unwrap_or_else(|| {
-        log::error!("Host is required unless creating an ID file.");
+        log::error!("Host is required unless running a subcommand.");
         exit(1);
     });
 
