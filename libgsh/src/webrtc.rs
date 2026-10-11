@@ -9,13 +9,13 @@ use crate::telemetry::{PipelineTelemetry, Stage};
 use prost::Message;
 use reactor_webrtc::{
     AudioTrack, DataChannel, EncodedVideoFrame as RtcEncodedVideoFrame, EncodedVideoTrack,
-    IceCandidate, LocalVideoTrack, MediaKind, PeerConnection, PeerConnectionFactory,
-    PeerConnectionObserver, PeerConnectionState, PreEncodedOptions, RtcConfiguration, SdpType,
-    SessionDescription, TrackVideoEncoder, TransceiverDirection, VideoCodec as RtcVideoCodec,
-    VideoTrackOptions,
+    FrameAction, FrameDirection, FrameTransform, IceCandidate, LocalVideoTrack, MediaKind,
+    PeerConnection, PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState,
+    PreEncodedOptions, RtcConfiguration, SdpType, SessionDescription, TrackVideoEncoder,
+    TransceiverDirection, VideoCodec as RtcVideoCodec, VideoTrackOptions,
 };
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use thiserror::Error;
@@ -31,6 +31,7 @@ const MAX_INPUT_MESSAGE: usize = 4096;
 const MAX_VIDEO_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_INPUT_BUFFERED: u64 = 64 * 1024;
 const MAX_FRAME_DIMENSION: u32 = 8192;
+const MAX_VIDEO_FRAMES_IN_FLIGHT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
@@ -39,6 +40,7 @@ pub enum VideoCodec {
 }
 
 /// Owned encoded access unit. The codec must match the one selected during SDP.
+#[derive(Debug)]
 pub struct EncodedVideoFrame {
     pub data: Vec<u8>,
     pub codec: VideoCodec,
@@ -48,6 +50,16 @@ pub struct EncodedVideoFrame {
     pub height: u32,
     /// RTP timestamp; zero allows libwebrtc to assign one.
     pub rtp_timestamp: u32,
+}
+
+/// Submission failure. `frame` is returned for validation/backpressure errors;
+/// on a native push failure it is `None` because the upstream call has already
+/// consumed it and its acceptance status is ambiguous.
+#[derive(Debug, Error)]
+#[error("video frame submission failed: {error}")]
+pub struct VideoSubmitError {
+    pub error: SessionError,
+    pub frame: Option<EncodedVideoFrame>,
 }
 
 #[derive(Debug, Error)]
@@ -78,6 +90,10 @@ pub enum SessionError {
     VideoCodecUnavailable,
     #[error("encoded frame codec does not match the negotiated session codec")]
     VideoCodecMismatch,
+    #[error("video packetizer is at its bounded in-flight frame limit")]
+    VideoBackpressure,
+    #[error("video packetizer failed after accepting frame ownership; recreate the session")]
+    VideoPipelineFailed,
     #[error("incoming event queue closed")]
     QueueClosed,
     #[error("session description has an unexpected kind")]
@@ -148,6 +164,9 @@ pub struct GshSession {
     width: u32,
     height: u32,
     negotiated_video_codec: Mutex<Option<VideoCodec>>,
+    video_frames_in_flight: Arc<AtomicUsize>,
+    _video_sender_transform: Option<FrameTransform>,
+    video_failed: AtomicBool,
 }
 
 impl GshSession {
@@ -240,6 +259,8 @@ impl GshSession {
         let peer = factory
             .create_peer_connection(&config, observer)
             .map_err(web_rtc_error)?;
+        let video_frames_in_flight = Arc::new(AtomicUsize::new(0));
+        let mut video_sender_transform = None;
         if let (Some(video), Some(audio)) = (&video, &audio) {
             let video_transceiver = peer
                 .add_transceiver(MediaKind::Video, TransceiverDirection::SendOnly)
@@ -250,6 +271,21 @@ impl GshSession {
             video_transceiver
                 .set_codec_preferences(&[RtcVideoCodec::H264, RtcVideoCodec::Vp8])
                 .map_err(web_rtc_error)?;
+            let frames_in_flight = video_frames_in_flight.clone();
+            let transform = FrameTransform::new(move |frame| {
+                if frame.direction == FrameDirection::Send {
+                    let _ = frames_in_flight.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |count| Some(count.saturating_sub(1)),
+                    );
+                }
+                FrameAction::Forward
+            });
+            video_transceiver
+                .set_sender_transform(&transform)
+                .map_err(web_rtc_error)?;
+            video_sender_transform = Some(transform);
             let audio_transceiver = peer
                 .add_transceiver(MediaKind::Audio, TransceiverDirection::SendOnly)
                 .map_err(web_rtc_error)?;
@@ -290,6 +326,9 @@ impl GshSession {
             width,
             height,
             negotiated_video_codec: Mutex::new(None),
+            video_frames_in_flight,
+            _video_sender_transform: video_sender_transform,
+            video_failed: AtomicBool::new(false),
         })
     }
 
@@ -403,6 +442,12 @@ impl GshSession {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Encoded frames accepted by the session but not yet observed at the RTP
+    /// packetizer. The session caps this count at two.
+    pub fn video_frames_pending(&self) -> usize {
+        self.video_frames_in_flight.load(Ordering::Relaxed)
+    }
+
     /// Shared opt-in telemetry collector for application capture/render stages
     /// and the session's measured send/receive boundaries.
     pub fn telemetry(&self) -> &PipelineTelemetry {
@@ -410,33 +455,63 @@ impl GshSession {
     }
 
     /// Push externally hardware-encoded H.264 Annex-B frames to the RTP track.
-    pub fn send_video(&self, frame: EncodedVideoFrame) -> Result<()> {
+    pub fn send_video(
+        &self,
+        frame: EncodedVideoFrame,
+    ) -> std::result::Result<(), VideoSubmitError> {
         let _timer = self.telemetry.time(Stage::WebRtcSend);
+        if self.video_failed.load(Ordering::Relaxed) {
+            return Err(video_submit_error(SessionError::VideoPipelineFailed, frame));
+        }
         if self.negotiated_video_codec() != Some(frame.codec) {
-            return Err(SessionError::VideoCodecMismatch);
+            return Err(video_submit_error(SessionError::VideoCodecMismatch, frame));
         }
         if frame.data.is_empty() {
-            return Err(SessionError::EmptyVideoFrame);
+            return Err(video_submit_error(SessionError::EmptyVideoFrame, frame));
         }
         if frame.data.len() > MAX_VIDEO_FRAME_BYTES {
-            return Err(SessionError::VideoFrameTooLarge);
+            return Err(video_submit_error(SessionError::VideoFrameTooLarge, frame));
         }
         if (frame.width != 0 && frame.width != self.width)
             || (frame.height != 0 && frame.height != self.height)
         {
-            return Err(SessionError::VideoDimensionsMismatch);
+            return Err(video_submit_error(
+                SessionError::VideoDimensionsMismatch,
+                frame,
+            ));
         }
-        self.video
-            .as_ref()
-            .ok_or(SessionError::MediaNotAvailable)?
-            .push_frame(RtcEncodedVideoFrame {
-                data: frame.data,
-                is_key_frame: frame.is_key_frame,
-                width: frame.width,
-                height: frame.height,
-                rtp_timestamp: frame.rtp_timestamp,
+        let Some(video) = self.video.as_ref() else {
+            return Err(video_submit_error(SessionError::MediaNotAvailable, frame));
+        };
+        if self
+            .video_frames_in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                if count < MAX_VIDEO_FRAMES_IN_FLIGHT {
+                    Some(count + 1)
+                } else {
+                    None
+                }
             })
-            .map_err(web_rtc_error)
+            .is_err()
+        {
+            return Err(video_submit_error(SessionError::VideoBackpressure, frame));
+        }
+        match video.push_frame(RtcEncodedVideoFrame {
+            data: frame.data,
+            is_key_frame: frame.is_key_frame,
+            width: frame.width,
+            height: frame.height,
+            rtp_timestamp: frame.rtp_timestamp,
+        }) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.video_failed.store(true, Ordering::Relaxed);
+                Err(VideoSubmitError {
+                    error: web_rtc_error(error),
+                    frame: None,
+                })
+            }
+        }
     }
 
     /// Push mono/stereo PCM to libwebrtc's Opus audio sender.
@@ -556,6 +631,13 @@ fn web_rtc_error(error: impl std::fmt::Display) -> SessionError {
     SessionError::WebRtc(error.to_string())
 }
 
+fn video_submit_error(error: SessionError, frame: EncodedVideoFrame) -> VideoSubmitError {
+    VideoSubmitError {
+        error,
+        frame: Some(frame),
+    }
+}
+
 fn negotiated_video_codec(sdp: &str) -> Option<VideoCodec> {
     let mut video_payloads = Vec::new();
     let mut video_mappings = std::collections::HashMap::new();
@@ -647,6 +729,26 @@ mod tests {
                 );
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
+            assert_eq!(
+                offerer.negotiated_video_codec(),
+                answerer.negotiated_video_codec()
+            );
+            let wrong_codec = match offerer.negotiated_video_codec().unwrap() {
+                VideoCodec::H264 => VideoCodec::Vp8,
+                VideoCodec::Vp8 => VideoCodec::H264,
+            };
+            let rejected = offerer
+                .send_video(EncodedVideoFrame {
+                    data: vec![0; 16],
+                    codec: wrong_codec,
+                    is_key_frame: true,
+                    width: 320,
+                    height: 240,
+                    rtp_timestamp: 0,
+                })
+                .unwrap_err();
+            assert!(matches!(rejected.error, SessionError::VideoCodecMismatch));
+            assert!(rejected.frame.is_some());
 
             let input = UserInput::default();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
