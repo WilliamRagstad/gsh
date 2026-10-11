@@ -47,6 +47,6 @@ Instrumentation overhead microbenchmark (same host, release Criterion, 30 sample
 | Telemetry/framework tests | Default library test suite: 19 passed; WebRTC-feature suite: 21 passed (includes SDP codec-selection properties and a local SDP/ICE/data-channel input loopback) |
 | Telemetry scope overhead | Disabled 7.968–7.987 ns; enabled 56.628–56.678 ns in the synthetic empty scope benchmark |
 | WebRTC feature compile | `cargo check -p libgsh --features webrtc`: passed |
-| WebRTC loopback | Two local peers negotiated SDP/ICE and exchanged input; 1 test passed (included in 21 feature-suite tests). This is not media/rendering performance. |
+| WebRTC loopback | Two local peers negotiated SDP/ICE, packetized one generated VP8 keyframe through the sender transform, and exchanged input; 1 test passed (included in 21 feature-suite tests). Remote decode/display and latency remain unmeasured. |
 
 This report is deliberately explicit about unverified items. Update it with host metadata and comparable measurements at each verified milestone.
