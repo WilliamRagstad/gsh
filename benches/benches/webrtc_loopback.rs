@@ -20,7 +20,7 @@ const VP8_KEYFRAME: &[u8] = &[
     0x38, 0x7b, 0x27, 0x38, 0x7b, 0x7a, 0xf4, 0x00, 0xfe, 0xff, 0xab, 0x50, 0x80,
 ];
 
-async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
+async fn connect_local_peers(raw_bgra: bool, width: u32, height: u32) -> (GshSession, GshSession) {
     let offerer_factory = PeerConnectionFactory::builder().build().unwrap();
     let answerer_factory = PeerConnectionFactory::builder().build().unwrap();
     let offerer = if raw_bgra {
@@ -28,16 +28,16 @@ async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
             offerer_factory,
             RtcConfiguration::default(),
             SessionRole::Offerer,
-            320,
-            240,
+            width,
+            height,
         )
     } else {
         GshSession::new(
             offerer_factory,
             RtcConfiguration::default(),
             SessionRole::Offerer,
-            320,
-            240,
+            width,
+            height,
         )
     }
     .unwrap();
@@ -46,8 +46,8 @@ async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
             answerer_factory,
             RtcConfiguration::default(),
             SessionRole::Answerer,
-            320,
-            240,
+            width,
+            height,
             VideoInputMode::RawBgra,
             &[VideoCodec::Vp8],
         )
@@ -56,8 +56,8 @@ async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
             answerer_factory,
             RtcConfiguration::default(),
             SessionRole::Answerer,
-            320,
-            240,
+            width,
+            height,
         )
     }
     .unwrap();
@@ -101,12 +101,29 @@ async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
     (offerer, answerer)
 }
 
+async fn send_raw_until_accepted(session: &GshSession, bgra: &[u8]) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match session.send_raw_video(black_box(bgra)) {
+            Ok(()) => return,
+            Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "raw sender queue stalled"
+                );
+                tokio::time::sleep(Duration::from_micros(100)).await;
+            }
+            Err(error) => panic!("raw video path failed: {error}"),
+        }
+    }
+}
+
 fn bench_loopback(c: &mut Criterion) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let (offerer, answerer) = runtime.block_on(connect_local_peers(false));
+    let (offerer, answerer) = runtime.block_on(connect_local_peers(false, 320, 240));
     let mut group = c.benchmark_group("webrtc_local_loopback");
 
     let input = UserInput::default();
@@ -158,7 +175,7 @@ fn bench_loopback(c: &mut Criterion) {
         });
     }
 
-    let (raw_offer, raw_answer) = runtime.block_on(connect_local_peers(true));
+    let (raw_offer, raw_answer) = runtime.block_on(connect_local_peers(true, 320, 240));
     let raw_bgra = vec![0x30_u8; 320 * 240 * 4];
     group.bench_function("bgra_to_vp8_encode_and_software_decode", |b| {
         b.iter_custom(|iterations| {
@@ -166,16 +183,12 @@ fn bench_loopback(c: &mut Criterion) {
                 let mut elapsed = Duration::ZERO;
                 for _ in 0..iterations {
                     let started = tokio::time::Instant::now();
-                    loop {
-                        match raw_offer.send_raw_video(black_box(&raw_bgra)) {
-                            Ok(()) => break,
-                            Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
-                                tokio::time::sleep(Duration::from_micros(100)).await;
-                            }
-                            Err(error) => panic!("raw video path failed: {error}"),
-                        }
-                    }
-                    let decoded = raw_answer.recv_video().await.unwrap();
+                    send_raw_until_accepted(&raw_offer, &raw_bgra).await;
+                    let decoded =
+                        tokio::time::timeout(Duration::from_secs(3), raw_answer.recv_video())
+                            .await
+                            .expect("raw decode timed out")
+                            .unwrap();
                     black_box((decoded.width, decoded.height, decoded.bgra.len()));
                     elapsed += started.elapsed();
                 }

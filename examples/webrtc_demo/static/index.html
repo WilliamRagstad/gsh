@@ -17,85 +17,162 @@
   <pre id="status">Connecting…</pre>
   <script>
     const status = document.querySelector('#status');
-    const video = document.querySelector('#video');
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const signaling = new WebSocket(`${scheme}//${location.host}/signal`);
+    const surface = document.querySelector('#video');
+    const signaling = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/signal`);
+    surface.tabIndex = 0;
+    const serverStatuses = [];
+    window.__gshStatuses = serverStatuses;
+
     let peer;
-    let inputChannel;
+    let control;
+    let realtime;
     let remoteDescriptionSet = false;
     const pendingCandidates = [];
+    const keysDown = new Set();
+    const buttonsDown = new Set();
+    const epoch = Date.now();
+    let controlSeq = 0;
+    let realtimeSeq = 0;
+    let totalDx = 0;
+    let totalDy = 0;
+    let pendingRealtime = null;
 
-    function writeVarint(out, value) {
-      value >>>= 0;
-      while (value > 0x7f) {
-        out.push((value & 0x7f) | 0x80);
-        value >>>= 7;
-      }
-      out.push(value);
+    function sendControl(message) {
+      if (!control || control.readyState !== 'open') return false;
+      control.send(JSON.stringify({ ...message, seq: ++controlSeq, epoch }));
+      return true;
     }
 
-    function sendMouseMove(x, y) {
-      if (!inputChannel || inputChannel.readyState !== 'open') return;
-      const mouse = [0x08, 0x00, 0x18]; // action=MOVE, field x
-      writeVarint(mouse, Math.max(0, x));
-      mouse.push(0x20); // field y
-      writeVarint(mouse, Math.max(0, y));
-      const message = [0x08, 0x01, 0x22]; // kind=MOUSE_EVENT, mouse_event oneof
-      writeVarint(message, mouse.length);
-      message.push(...mouse);
-      inputChannel.send(new Uint8Array(message));
+    // Realtime channel is lossy by design. Do not accumulate stale pointer state.
+    function flushRealtime() {
+      if (!realtime || realtime.readyState !== 'open' || !pendingRealtime) return;
+      if (realtime.bufferedAmount > 2048) return;
+      realtime.send(JSON.stringify(pendingRealtime));
+      pendingRealtime = null;
     }
-    window.__gshSendMouseMove = sendMouseMove;
 
-    signaling.onopen = () => { status.textContent = 'Waiting for server offer…'; };
+    function sendRealtime(message) {
+      pendingRealtime = { ...message, seq: ++realtimeSeq, epoch };
+      flushRealtime();
+    }
+
+    function position(event) {
+      const bounds = surface.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+        y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+      };
+    }
+
+    async function startOffer() {
+      peer = new RTCPeerConnection({ iceServers: [] });
+      window.__gshPeer = peer;
+      peer.addTransceiver('video', { direction: 'recvonly' });
+      peer.addTransceiver('audio', { direction: 'recvonly' });
+      control = peer.createDataChannel('gsh.control', { ordered: true });
+      realtime = peer.createDataChannel('gsh.realtime', {
+        ordered: false,
+        maxRetransmits: 0
+      });
+      window.__gshControl = control;
+      window.__gshInput = control;
+      window.__gshRealtime = realtime;
+      realtime.bufferedAmountLowThreshold = 512;
+      realtime.addEventListener('bufferedamountlow', flushRealtime);
+      peer.ontrack = event => {
+        if (event.streams[0]) surface.srcObject = event.streams[0];
+        status.textContent = `Remote ${event.track.kind} track received`;
+      };
+      peer.onconnectionstatechange = () => {
+        status.textContent = `Peer state: ${peer.connectionState}`;
+      };
+      peer.onicecandidate = event => {
+        if (event.candidate && signaling.readyState === WebSocket.OPEN) {
+          signaling.send(JSON.stringify({ type: 'candidate', candidate: event.candidate.toJSON() }));
+        }
+      };
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      signaling.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+      status.textContent = 'Offer sent; connecting…';
+    }
+
+    function releaseAll() {
+      keysDown.clear();
+      buttonsDown.clear();
+      sendControl({ t: 'release_all' });
+    }
+
+    signaling.onopen = startOffer;
     signaling.onmessage = async ({ data }) => {
       const message = JSON.parse(data);
-      if (message.type === 'offer') {
-        peer = new RTCPeerConnection({ iceServers: [] });
-        window.__gshPeer = peer;
-        peer.ontrack = event => {
-          if (event.streams[0]) video.srcObject = event.streams[0];
-          status.textContent = `Remote ${event.track.kind} track received`;
-        };
-        peer.ondatachannel = event => {
-          if (event.channel.label === 'gsh-input-v1') {
-            inputChannel = event.channel;
-            window.__gshInput = inputChannel;
-          }
-        };
-        peer.onconnectionstatechange = () => {
-          status.textContent = `Peer state: ${peer.connectionState}`;
-        };
-        peer.onicecandidate = event => {
-          if (event.candidate && signaling.readyState === WebSocket.OPEN) {
-            signaling.send(JSON.stringify({ type: 'candidate', candidate: event.candidate.toJSON() }));
-          }
-        };
-        await peer.setRemoteDescription({ type: 'offer', sdp: message.sdp });
+      if (message.type === 'answer') {
+        await peer.setRemoteDescription({ type: 'answer', sdp: message.sdp });
         remoteDescriptionSet = true;
         for (const candidate of pendingCandidates.splice(0)) await peer.addIceCandidate(candidate);
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        signaling.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
-        status.textContent = 'Answer sent; connecting media…';
       } else if (message.type === 'candidate') {
-        const candidate = message.candidate;
-        if (peer && remoteDescriptionSet) await peer.addIceCandidate(candidate);
-        else pendingCandidates.push(candidate);
+        if (peer && remoteDescriptionSet) await peer.addIceCandidate(message.candidate);
+        else pendingCandidates.push(message.candidate);
       } else if (message.type === 'status') {
+        serverStatuses.push(message.message);
+        if (serverStatuses.length > 32) serverStatuses.shift();
         status.textContent = message.message;
       }
     };
-    signaling.onclose = () => { status.textContent = 'Signaling closed'; };
+    signaling.onclose = releaseAll;
     signaling.onerror = () => { status.textContent = 'Signaling error; check server log'; };
 
-    video.addEventListener('pointermove', event => {
-      const bounds = video.getBoundingClientRect();
-      const scaleX = 320 / bounds.width;
-      const scaleY = 240 / bounds.height;
-      sendMouseMove(Math.round((event.clientX - bounds.left) * scaleX),
-                    Math.round((event.clientY - bounds.top) * scaleY));
+    surface.addEventListener('keydown', event => {
+      if (keysDown.has(event.code)) return;
+      keysDown.add(event.code);
+      sendControl({ t: 'key', code: event.code, down: true });
+      event.preventDefault();
     });
+    surface.addEventListener('keyup', event => {
+      keysDown.delete(event.code);
+      sendControl({ t: 'key', code: event.code, down: false });
+      event.preventDefault();
+    });
+    surface.addEventListener('pointermove', event => {
+      if (document.pointerLockElement === surface) {
+        totalDx += event.movementX;
+        totalDy += event.movementY;
+        sendRealtime({ t: 'relative_motion', dx_total: totalDx, dy_total: totalDy });
+      } else {
+        sendRealtime({ t: 'pointer', ...position(event) });
+      }
+    });
+    surface.addEventListener('click', () => surface.requestPointerLock?.());
+    surface.addEventListener('pointerdown', event => {
+      surface.focus();
+      surface.setPointerCapture?.(event.pointerId);
+      buttonsDown.add(event.button);
+      sendControl({ t: 'button', button: event.button, down: true, ...position(event) });
+      event.preventDefault();
+    });
+    surface.addEventListener('pointerup', event => {
+      buttonsDown.delete(event.button);
+      sendControl({ t: 'button', button: event.button, down: false, ...position(event) });
+      if (surface.hasPointerCapture?.(event.pointerId)) surface.releasePointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    surface.addEventListener('lostpointercapture', releaseAll);
+    surface.addEventListener('wheel', event => {
+      sendControl({ t: 'scroll', dx: event.deltaX, dy: event.deltaY, mode: event.deltaMode });
+      event.preventDefault();
+    }, { passive: false });
+    surface.addEventListener('blur', releaseAll);
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) releaseAll();
+    });
+    // Re-send the cumulative baseline while pointer lock is active so a final
+    // lossy update is repaired without using requestAnimationFrame as a clock.
+    setInterval(() => {
+      if (document.pointerLockElement === surface) {
+        sendRealtime({ t: 'relative_motion', dx_total: totalDx, dy_total: totalDy });
+      }
+    }, 50);
   </script>
 </body>
 </html>

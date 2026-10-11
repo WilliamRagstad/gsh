@@ -181,6 +181,8 @@ message UserInput {
 		int32 y = 4;
 		float delta_x = 5; // Scroll deltas
 		float delta_y = 6;
+		// True when delta_x/delta_y carry relative pointer movement, not scroll.
+		bool relative = 7;
 	}
 	message WindowEvent {
 		enum WindowAction {

@@ -15,6 +15,8 @@ pub mod shared;
 pub mod telemetry;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_input;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

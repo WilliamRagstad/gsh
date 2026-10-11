@@ -250,6 +250,7 @@ impl Client {
                     button,
                     delta_x,
                     delta_y,
+                    relative: false,
                 })),
             })
             .await?;

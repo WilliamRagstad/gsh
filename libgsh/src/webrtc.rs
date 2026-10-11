@@ -21,19 +21,23 @@ use std::sync::{
     Arc, Mutex,
 };
 use thiserror::Error;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, Notify};
 
 const INPUT_CHANNEL: &str = "gsh-input-v1";
 const CONTROL_CHANNEL: &str = "gsh-control-v1";
+const GSH_CONTROL_CHANNEL: &str = "gsh.control";
+const REALTIME_CHANNEL: &str = "gsh.realtime";
 const INPUT_QUEUE_CAPACITY: usize = 256;
 const CONTROL_QUEUE_CAPACITY: usize = 64;
 const ICE_QUEUE_CAPACITY: usize = 256;
 const MAX_CONTROL_MESSAGE: usize = 64 * 1024;
 const MAX_INPUT_MESSAGE: usize = 4096;
+const MAX_REALTIME_MESSAGE: usize = 4096;
 const MAX_VIDEO_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RAW_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DECODED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_INPUT_BUFFERED: u64 = 64 * 1024;
+const MAX_REALTIME_BUFFERED: u64 = 2048;
 const MAX_FRAME_DIMENSION: u32 = 8192;
 const MAX_SDP_BYTES: usize = 1024 * 1024;
 const MAX_ICE_CANDIDATE_BYTES: usize = 4096;
@@ -115,6 +119,8 @@ pub struct InboundMediaStats {
     pub frames_per_second: f64,
     pub frames_decoded: u32,
     pub frames_dropped: u32,
+    pub frame_width: u32,
+    pub frame_height: u32,
     pub jitter_s: f64,
     pub average_jitter_buffer_delay_s: Option<f64>,
 }
@@ -190,6 +196,10 @@ pub enum SessionError {
     IceQueueOverflow(u64),
     #[error("input send is backpressured; retry or coalesce replaceable pointer updates")]
     InputBackpressure,
+    #[error("realtime input message exceeds {MAX_REALTIME_MESSAGE} bytes")]
+    RealtimeMessageTooLarge,
+    #[error("realtime data channel is backpressured; coalesce to the newest state")]
+    RealtimeBackpressure,
     #[error("this session role does not publish local media")]
     MediaNotAvailable,
     #[error("SDP did not negotiate a supported video codec (H.264 or VP8)")]
@@ -206,6 +216,8 @@ pub enum SessionError {
     WrongDescriptionKind,
     #[error("signaling payload exceeds the configured size limit")]
     SignalingPayloadTooLarge,
+    #[error("bitrate limits must satisfy min <= start <= max")]
+    InvalidBitrateRange,
 }
 
 pub type Result<T> = std::result::Result<T, SessionError>;
@@ -216,6 +228,9 @@ pub enum SessionRole {
     Offerer,
     /// Receives channels created by the offerer.
     Answerer,
+    /// Answers the remote offer while publishing local media; data channels
+    /// are created by the offerer and arrive via `on_data_channel`.
+    AnswererPublisher,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,11 +265,135 @@ enum SessionVideoTrack {
 struct ChannelRouter {
     input_channel: ChannelSlot,
     control_channel: ChannelSlot,
+    realtime_channel: ChannelSlot,
     input_tx: mpsc::Sender<UserInput>,
     control_tx: mpsc::Sender<Vec<u8>>,
+    realtime_messages: Arc<LatestBytesQueue>,
+    realtime_coalesced: Arc<AtomicU64>,
     dropped_input: Arc<AtomicU64>,
     dropped_control: Arc<AtomicU64>,
     telemetry: PipelineTelemetry,
+}
+
+struct LatestBytesQueue {
+    value: Mutex<Option<Vec<u8>>>,
+    notify: Notify,
+    closed: AtomicBool,
+}
+
+impl LatestBytesQueue {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            value: Mutex::new(None),
+            notify: Notify::new(),
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    fn publish(&self, value: Vec<u8>) -> bool {
+        if self.closed.load(Ordering::Relaxed) {
+            return false;
+        }
+        let replaced = self
+            .value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(value)
+            .is_some();
+        self.notify.notify_one();
+        replaced
+    }
+
+    async fn recv(&self) -> Option<Vec<u8>> {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(value) = self
+                .value
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+            {
+                return Some(value);
+            }
+            if self.closed.load(Ordering::Relaxed) {
+                return None;
+            }
+            notified.await;
+        }
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::Relaxed);
+        self.notify.notify_waiters();
+    }
+}
+
+/// One-slot latest-frame mailbox. It replaces stale decoded frames and owns at
+/// most one full-resolution CPU frame for backpressured consumers.
+struct LatestVideoQueue {
+    frame: Mutex<Option<Arc<DecodedVideoFrame>>>,
+    notify: Notify,
+    closed: AtomicBool,
+    published_frames: AtomicU64,
+}
+
+impl LatestVideoQueue {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            frame: Mutex::new(None),
+            notify: Notify::new(),
+            closed: AtomicBool::new(false),
+            published_frames: AtomicU64::new(0),
+        })
+    }
+
+    fn publish(&self, frame: DecodedVideoFrame) -> bool {
+        if self.closed.load(Ordering::Relaxed) {
+            return false;
+        }
+        let replaced = self
+            .frame
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(Arc::new(frame))
+            .is_some();
+        self.published_frames.fetch_add(1, Ordering::Relaxed);
+        self.notify.notify_one();
+        replaced
+    }
+
+    fn published_frames(&self) -> u64 {
+        self.published_frames.load(Ordering::Relaxed)
+    }
+
+    async fn recv(&self) -> Option<Arc<DecodedVideoFrame>> {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(frame) = self.try_recv() {
+                return Some(frame);
+            }
+            if self.closed.load(Ordering::Relaxed) {
+                return None;
+            }
+            notified.await;
+        }
+    }
+
+    fn try_recv(&self) -> Option<Arc<DecodedVideoFrame>> {
+        self.frame
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::Relaxed);
+        self.notify.notify_waiters();
+    }
 }
 
 /// One client session. App-facing methods operate on GSH inputs/control and
@@ -262,13 +401,17 @@ struct ChannelRouter {
 pub struct GshSession {
     _factory: PeerConnectionFactory,
     peer: PeerConnection,
+    role: SessionRole,
     video: Option<SessionVideoTrack>,
     _audio: Option<AudioTrack>,
     input_channel: ChannelSlot,
     control_channel: ChannelSlot,
+    realtime_channel: ChannelSlot,
     input_rx: tokio::sync::Mutex<mpsc::Receiver<UserInput>>,
     control_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
-    video_rx: tokio::sync::Mutex<watch::Receiver<Option<Arc<DecodedVideoFrame>>>>,
+    realtime_messages: Arc<LatestBytesQueue>,
+    realtime_coalesced: Arc<AtomicU64>,
+    video_frames: Arc<LatestVideoQueue>,
     audio_rx: tokio::sync::Mutex<mpsc::Receiver<DecodedAudioFrame>>,
     feedback_rx: tokio::sync::Mutex<mpsc::Receiver<VideoEncoderFeedback>>,
     ice_rx: tokio::sync::Mutex<mpsc::Receiver<CandidateMessage>>,
@@ -281,9 +424,10 @@ pub struct GshSession {
     height: u32,
     negotiated_video_codec: Mutex<Option<VideoCodec>>,
     video_frames_in_flight: Arc<AtomicUsize>,
-    _video_sender_transform: Option<FrameTransform>,
+    _video_sender_transform: Mutex<Option<FrameTransform>>,
     video_failed: AtomicBool,
     dropped_audio: Arc<AtomicU64>,
+    decoded_video_callbacks: Arc<AtomicU64>,
     dropped_feedback: Arc<AtomicU64>,
     dropped_video: Arc<AtomicU64>,
     _remote_tracks: Arc<Mutex<Vec<RemoteTrack>>>,
@@ -368,7 +512,7 @@ impl GshSession {
             return Err(SessionError::VideoCodecUnavailable);
         }
 
-        let (video, audio) = if role == SessionRole::Offerer {
+        let (video, audio) = if role != SessionRole::Answerer {
             let video = match video_input_mode {
                 VideoInputMode::PreEncoded => {
                     let mut options = VideoTrackOptions::default();
@@ -403,7 +547,9 @@ impl GshSession {
 
         let (input_tx, input_rx) = mpsc::channel(INPUT_QUEUE_CAPACITY);
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
-        let (video_tx, video_rx) = watch::channel(None);
+        let realtime_messages = LatestBytesQueue::new();
+        let realtime_coalesced = Arc::new(AtomicU64::new(0));
+        let video_frames = LatestVideoQueue::new();
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
         let (feedback_tx, feedback_rx) = mpsc::channel(FEEDBACK_QUEUE_CAPACITY);
         let (ice_tx, ice_rx) = mpsc::channel(ICE_QUEUE_CAPACITY);
@@ -411,6 +557,7 @@ impl GshSession {
         let dropped_control = Arc::new(AtomicU64::new(0));
         let dropped_ice = Arc::new(AtomicU64::new(0));
         let dropped_audio = Arc::new(AtomicU64::new(0));
+        let decoded_video_callbacks = Arc::new(AtomicU64::new(0));
         let dropped_feedback = Arc::new(AtomicU64::new(0));
         let dropped_video = Arc::new(AtomicU64::new(0));
         let remote_tracks = Arc::new(Mutex::new(Vec::new()));
@@ -418,11 +565,15 @@ impl GshSession {
         let telemetry = PipelineTelemetry::default();
         let input_channel: ChannelSlot = Arc::new(Mutex::new(None));
         let control_channel: ChannelSlot = Arc::new(Mutex::new(None));
+        let realtime_channel: ChannelSlot = Arc::new(Mutex::new(None));
         let channel_router = ChannelRouter {
             input_channel: input_channel.clone(),
             control_channel: control_channel.clone(),
+            realtime_channel: realtime_channel.clone(),
             input_tx: input_tx.clone(),
             control_tx: control_tx.clone(),
+            realtime_messages: realtime_messages.clone(),
+            realtime_coalesced: realtime_coalesced.clone(),
             dropped_input: dropped_input.clone(),
             dropped_control: dropped_control.clone(),
             telemetry: telemetry.clone(),
@@ -447,6 +598,7 @@ impl GshSession {
             });
         }
 
+        let video_frames_observer = video_frames.clone();
         let observer = PeerConnectionObserver::new()
             .on_connection_state_change({
                 let connected = connected.clone();
@@ -479,15 +631,18 @@ impl GshSession {
                 let telemetry = telemetry.clone();
                 let dropped_audio = dropped_audio.clone();
                 let dropped_video = dropped_video.clone();
+                let decoded_video_callbacks = decoded_video_callbacks.clone();
                 let remote_tracks = remote_tracks.clone();
                 move |track| {
                     match &track {
                         RemoteTrack::Video(video) => {
-                            let video_tx = video_tx.clone();
+                            let video_frames = video_frames_observer.clone();
                             let telemetry = telemetry.clone();
                             let dropped_video = dropped_video.clone();
+                            let decoded_video_callbacks = decoded_video_callbacks.clone();
                             video.on_frame(move |frame| {
                                 let _timer = telemetry.time(Stage::Decode);
+                                decoded_video_callbacks.fetch_add(1, Ordering::Relaxed);
                                 let expected = (frame.width as usize)
                                     .checked_mul(frame.height as usize)
                                     .and_then(|pixels| pixels.checked_mul(4));
@@ -501,11 +656,14 @@ impl GshSession {
                                     dropped_video.fetch_add(1, Ordering::Relaxed);
                                     return;
                                 }
-                                video_tx.send_replace(Some(Arc::new(DecodedVideoFrame {
+                                let overwritten = video_frames.publish(DecodedVideoFrame {
                                     bgra: Arc::from(frame.bgra),
                                     width: frame.width,
                                     height: frame.height,
-                                })));
+                                });
+                                if overwritten {
+                                    dropped_video.fetch_add(1, Ordering::Relaxed);
+                                }
                             });
                         }
                         RemoteTrack::Audio(audio) => {
@@ -543,7 +701,10 @@ impl GshSession {
             .map_err(web_rtc_error)?;
         let video_frames_in_flight = Arc::new(AtomicUsize::new(0));
         let mut video_sender_transform = None;
-        if let (Some(video), Some(audio)) = (&video, &audio) {
+        if role == SessionRole::Offerer {
+            let (Some(video), Some(audio)) = (&video, &audio) else {
+                return Err(SessionError::MediaNotAvailable);
+            };
             let video_transceiver = peer
                 .add_transceiver(MediaKind::Video, TransceiverDirection::SendOnly)
                 .map_err(web_rtc_error)?;
@@ -556,17 +717,7 @@ impl GshSession {
             video_transceiver
                 .set_codec_preferences(&rtc_codec_preferences)
                 .map_err(web_rtc_error)?;
-            let frames_in_flight = video_frames_in_flight.clone();
-            let transform = FrameTransform::new(move |frame| {
-                if frame.direction == FrameDirection::Send {
-                    let _ = frames_in_flight.fetch_update(
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                        |count| Some(count.saturating_sub(1)),
-                    );
-                }
-                FrameAction::Forward
-            });
+            let transform = frame_release_transform(video_frames_in_flight.clone());
             video_transceiver
                 .set_sender_transform(&transform)
                 .map_err(web_rtc_error)?;
@@ -575,11 +726,6 @@ impl GshSession {
                 .add_transceiver(MediaKind::Audio, TransceiverDirection::SendOnly)
                 .map_err(web_rtc_error)?;
             audio_transceiver.set_track(audio).map_err(web_rtc_error)?;
-        } else {
-            peer.add_transceiver(MediaKind::Video, TransceiverDirection::RecvOnly)
-                .map_err(web_rtc_error)?;
-            peer.add_transceiver(MediaKind::Audio, TransceiverDirection::RecvOnly)
-                .map_err(web_rtc_error)?;
         }
 
         if role == SessionRole::Offerer {
@@ -596,13 +742,17 @@ impl GshSession {
         Ok(Self {
             _factory: factory,
             peer,
+            role,
             video,
             _audio: audio,
             input_channel,
             control_channel,
+            realtime_channel,
             input_rx: tokio::sync::Mutex::new(input_rx),
             control_rx: tokio::sync::Mutex::new(control_rx),
-            video_rx: tokio::sync::Mutex::new(video_rx),
+            realtime_messages: realtime_messages.clone(),
+            realtime_coalesced,
+            video_frames: video_frames.clone(),
             audio_rx: tokio::sync::Mutex::new(audio_rx),
             feedback_rx: tokio::sync::Mutex::new(feedback_rx),
             ice_rx: tokio::sync::Mutex::new(ice_rx),
@@ -615,9 +765,10 @@ impl GshSession {
             height,
             negotiated_video_codec: Mutex::new(None),
             video_frames_in_flight,
-            _video_sender_transform: video_sender_transform,
+            _video_sender_transform: Mutex::new(video_sender_transform),
             video_failed: AtomicBool::new(false),
             dropped_audio,
+            decoded_video_callbacks,
             dropped_feedback,
             dropped_video,
             _remote_tracks: remote_tracks,
@@ -652,15 +803,47 @@ impl GshSession {
             })
             .map_err(web_rtc_error)?;
         let rtc_codec_preferences = rtc_codec_preferences(&self.codec_preferences);
-        if let Some(video) = self
-            .peer
-            .transceivers()
-            .into_iter()
-            .find(|transceiver| transceiver.kind() == MediaKind::Video)
-        {
+        if self.role == SessionRole::AnswererPublisher {
+            let local_video = self.video.as_ref().ok_or(SessionError::MediaNotAvailable)?;
+            let local_audio = self
+                ._audio
+                .as_ref()
+                .ok_or(SessionError::MediaNotAvailable)?;
+            let transceivers = self.peer.transceivers();
+            let video = transceivers
+                .iter()
+                .find(|transceiver| transceiver.kind() == MediaKind::Video)
+                .ok_or_else(|| SessionError::WebRtc("remote offer has no video m-line".into()))?;
+            video
+                .set_track(match local_video {
+                    SessionVideoTrack::PreEncoded(track) => track.track(),
+                    SessionVideoTrack::Raw(track) => track,
+                })
+                .map_err(web_rtc_error)?;
+            video
+                .set_direction(TransceiverDirection::SendOnly)
+                .map_err(web_rtc_error)?;
             video
                 .set_codec_preferences(&rtc_codec_preferences)
                 .map_err(web_rtc_error)?;
+
+            let audio = transceivers
+                .iter()
+                .find(|transceiver| transceiver.kind() == MediaKind::Audio)
+                .ok_or_else(|| SessionError::WebRtc("remote offer has no audio m-line".into()))?;
+            audio.set_track(local_audio).map_err(web_rtc_error)?;
+            audio
+                .set_direction(TransceiverDirection::SendOnly)
+                .map_err(web_rtc_error)?;
+
+            let transform = frame_release_transform(self.video_frames_in_flight.clone());
+            video
+                .set_sender_transform(&transform)
+                .map_err(web_rtc_error)?;
+            *self
+                ._video_sender_transform
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(transform);
         }
         let answer = self.peer.create_answer().map_err(web_rtc_error)?;
         let codec =
@@ -744,6 +927,41 @@ impl GshSession {
         self.connected.load(Ordering::Relaxed)
     }
 
+    /// Set libwebrtc's aggregate congestion-control bounds (bits per second).
+    /// `None` leaves that bound at the native default. Call outside the media
+    /// hot path; congestion feedback remains authoritative for the encoder.
+    pub fn set_bitrate_limits(
+        &self,
+        minimum_bps: Option<u32>,
+        start_bps: Option<u32>,
+        maximum_bps: Option<u32>,
+    ) -> Result<()> {
+        if minimum_bps
+            .zip(start_bps)
+            .is_some_and(|(min, start)| min > start)
+            || start_bps
+                .zip(maximum_bps)
+                .is_some_and(|(start, max)| start > max)
+            || minimum_bps
+                .zip(maximum_bps)
+                .is_some_and(|(min, max)| min > max)
+        {
+            return Err(SessionError::InvalidBitrateRange);
+        }
+        let convert = |value: Option<u32>| -> Result<Option<i32>> {
+            value
+                .map(|value| i32::try_from(value).map_err(|_| SessionError::InvalidBitrateRange))
+                .transpose()
+        };
+        self.peer
+            .set_bitrate(
+                convert(minimum_bps)?,
+                convert(start_bps)?,
+                convert(maximum_bps)?,
+            )
+            .map_err(web_rtc_error)
+    }
+
     /// Collect a compact WebRTC transport/media stats snapshot. The native
     /// stats request is synchronous (typically a few milliseconds, with a
     /// bounded upstream timeout); call it off the frame/input hot path.
@@ -763,6 +981,8 @@ impl GshSession {
                 frames_per_second: stats.frames_per_second,
                 frames_decoded: stats.frames_decoded,
                 frames_dropped: stats.frames_dropped,
+                frame_width: stats.frame_width,
+                frame_height: stats.frame_height,
                 jitter_s: stats.jitter_s,
                 average_jitter_buffer_delay_s: stats
                     .average_jitter_buffer_delay()
@@ -811,10 +1031,27 @@ impl GshSession {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Encoded frames accepted by the session but not yet observed at the RTP
-    /// packetizer. The session caps this count at two.
+    /// Video frames accepted by the session but not yet observed at the RTP
+    /// packetizer. Raw frames count while they are awaiting encoder output.
+    /// The session caps this count at two.
     pub fn video_frames_pending(&self) -> usize {
         self.video_frames_in_flight.load(Ordering::Relaxed)
+    }
+
+    fn acquire_video_slot(&self) -> bool {
+        self.video_frames_in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                (count < MAX_VIDEO_FRAMES_IN_FLIGHT).then_some(count + 1)
+            })
+            .is_ok()
+    }
+
+    fn release_video_slot(&self) {
+        let _ = self.video_frames_in_flight.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |count| Some(count.saturating_sub(1)),
+        );
     }
 
     /// Shared opt-in telemetry collector for application capture/render stages
@@ -856,17 +1093,7 @@ impl GshSession {
             }
             None => return Err(video_submit_error(SessionError::MediaNotAvailable, frame)),
         };
-        if self
-            .video_frames_in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                if count < MAX_VIDEO_FRAMES_IN_FLIGHT {
-                    Some(count + 1)
-                } else {
-                    None
-                }
-            })
-            .is_err()
-        {
+        if !self.acquire_video_slot() {
             return Err(video_submit_error(SessionError::VideoBackpressure, frame));
         }
         match video.push_frame(RtcEncodedVideoFrame {
@@ -878,6 +1105,7 @@ impl GshSession {
         }) {
             Ok(()) => Ok(()),
             Err(error) => {
+                self.release_video_slot();
                 self.video_failed.store(true, Ordering::Relaxed);
                 Err(VideoSubmitError {
                     error: web_rtc_error(error),
@@ -911,23 +1139,13 @@ impl GshSession {
         if self.negotiated_video_codec().is_none() {
             return Err(SessionError::VideoCodecUnavailable);
         }
-        if self
-            .video_frames_in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                if count < MAX_VIDEO_FRAMES_IN_FLIGHT {
-                    Some(count + 1)
-                } else {
-                    None
-                }
-            })
-            .is_err()
-        {
+        if !self.acquire_video_slot() {
             return Err(SessionError::VideoBackpressure);
         }
         match video.push_frame(RtcVideoFrame::new(bgra, self.width, self.height)) {
             Ok(()) => Ok(()),
             Err(error) => {
-                self.video_frames_in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.release_video_slot();
                 Err(web_rtc_error(error))
             }
         }
@@ -989,6 +1207,24 @@ impl GshSession {
         channel.send(&bytes, true).map_err(web_rtc_error)
     }
 
+    /// Send a bounded latest-state payload over `gsh.realtime`. The channel's
+    /// reliability/ordering policy is selected by its creator; browser offers
+    /// should use unordered delivery with zero retransmissions.
+    pub fn send_realtime(&self, payload: &[u8]) -> Result<()> {
+        if payload.len() > MAX_REALTIME_MESSAGE {
+            return Err(SessionError::RealtimeMessageTooLarge);
+        }
+        let channel = self
+            .realtime_channel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let channel = channel.as_ref().ok_or(SessionError::ChannelNotOpen)?;
+        if channel.buffered_amount() > MAX_REALTIME_BUFFERED {
+            return Err(SessionError::RealtimeBackpressure);
+        }
+        channel.send(payload, true).map_err(web_rtc_error)
+    }
+
     pub async fn recv_control(&self) -> Result<Vec<u8>> {
         let lost = self.dropped_control.swap(0, Ordering::Relaxed);
         if lost > 0 {
@@ -1002,17 +1238,41 @@ impl GshSession {
             .ok_or(SessionError::QueueClosed)
     }
 
+    /// Receive the newest replaceable pointer/gamepad state. Older queued
+    /// realtime snapshots are coalesced instead of being applied late.
+    pub async fn recv_realtime(&self) -> Result<Vec<u8>> {
+        self.realtime_messages
+            .recv()
+            .await
+            .ok_or(SessionError::QueueClosed)
+    }
+
+    pub fn realtime_messages_coalesced(&self) -> u64 {
+        self.realtime_coalesced.load(Ordering::Relaxed)
+    }
+
     /// Receive the latest decoded video frame. Intermediate frames are replaced
     /// rather than queued, preventing presentation lag from growing unbounded.
     pub async fn recv_video(&self) -> Option<Arc<DecodedVideoFrame>> {
-        let mut receiver = self.video_rx.lock().await;
-        receiver.changed().await.ok()?;
-        let frame = receiver.borrow_and_update().clone();
-        frame
+        self.video_frames.recv().await
+    }
+
+    /// Non-blocking latest-frame read for render loops that already have a
+    /// frame-pacing clock of their own.
+    pub fn try_recv_video(&self) -> Option<Arc<DecodedVideoFrame>> {
+        self.video_frames.try_recv()
     }
 
     pub fn dropped_decoded_video_frames(&self) -> u64 {
         self.dropped_video.load(Ordering::Relaxed)
+    }
+
+    pub fn decoded_video_frames_published(&self) -> u64 {
+        self.video_frames.published_frames()
+    }
+
+    pub fn decoded_video_callbacks(&self) -> u64 {
+        self.decoded_video_callbacks.load(Ordering::Relaxed)
     }
 
     /// Receive a decoded PCM audio chunk from the bounded native audio queue.
@@ -1040,6 +1300,13 @@ impl GshSession {
             .recv()
             .await
             .ok_or(SessionError::QueueClosed)
+    }
+}
+
+impl Drop for GshSession {
+    fn drop(&mut self) {
+        self.video_frames.close();
+        self.realtime_messages.close();
     }
 }
 
@@ -1071,21 +1338,37 @@ fn route_data_channel(channel: DataChannel, router: &ChannelRouter) {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(channel);
         }
-        CONTROL_CHANNEL => {
+        CONTROL_CHANNEL | GSH_CONTROL_CHANNEL => {
             let control_tx = router.control_tx.clone();
             let dropped_control = router.dropped_control.clone();
             let telemetry = router.telemetry.clone();
-            channel.on_message(move |data, binary| {
+            channel.on_message(move |data, _binary| {
                 let _timer = telemetry.time(Stage::WebRtcReceive);
-                if binary
-                    && data.len() <= MAX_CONTROL_MESSAGE
-                    && control_tx.try_send(data.to_vec()).is_err()
-                {
+                if data.len() > MAX_CONTROL_MESSAGE {
+                    dropped_control.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                if control_tx.try_send(data.to_vec()).is_err() {
                     dropped_control.fetch_add(1, Ordering::Relaxed);
                 }
             });
             *router
                 .control_channel
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(channel);
+        }
+        REALTIME_CHANNEL => {
+            let realtime_messages = router.realtime_messages.clone();
+            let realtime_coalesced = router.realtime_coalesced.clone();
+            let telemetry = router.telemetry.clone();
+            channel.on_message(move |data, _binary| {
+                let _timer = telemetry.time(Stage::WebRtcReceive);
+                if data.len() <= MAX_REALTIME_MESSAGE && realtime_messages.publish(data.to_vec()) {
+                    realtime_coalesced.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            *router
+                .realtime_channel
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(channel);
         }
@@ -1095,6 +1378,17 @@ fn route_data_channel(channel: DataChannel, router: &ChannelRouter) {
 
 fn web_rtc_error(error: impl std::fmt::Display) -> SessionError {
     SessionError::WebRtc(error.to_string())
+}
+
+fn frame_release_transform(frames_in_flight: Arc<AtomicUsize>) -> FrameTransform {
+    FrameTransform::new(move |frame| {
+        if frame.direction == FrameDirection::Send {
+            let _ = frames_in_flight.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                Some(count.saturating_sub(1))
+            });
+        }
+        FrameAction::Forward
+    })
 }
 
 fn media_stream_kind(kind: StreamKind) -> MediaStreamKind {
@@ -1214,6 +1508,13 @@ mod tests {
                 240,
             )
             .unwrap();
+            offerer
+                .set_bitrate_limits(Some(100_000), Some(500_000), Some(2_000_000))
+                .unwrap();
+            assert!(matches!(
+                offerer.set_bitrate_limits(Some(500), Some(100), Some(1_000)),
+                Err(SessionError::InvalidBitrateRange)
+            ));
 
             let offer = offerer.create_offer().unwrap();
             let answer = answerer.accept_offer(offer).unwrap();
@@ -1360,6 +1661,18 @@ mod tests {
                 240,
             )
             .unwrap();
+            let mut bgra = vec![0; 320 * 240 * 4];
+            assert!(matches!(
+                offerer.send_raw_video(&bgra),
+                Err(SessionError::VideoCodecUnavailable)
+            ));
+            assert!(offerer.acquire_video_slot());
+            assert!(offerer.acquire_video_slot());
+            assert!(!offerer.acquire_video_slot());
+            assert_eq!(offerer.video_frames_pending(), MAX_VIDEO_FRAMES_IN_FLIGHT);
+            offerer.release_video_slot();
+            offerer.release_video_slot();
+
             let answerer = GshSession::new_with_video_input(
                 PeerConnectionFactory::builder().build().unwrap(),
                 RtcConfiguration::default(),
@@ -1393,7 +1706,6 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
 
-            let mut bgra = vec![0; 320 * 240 * 4];
             for pixel in bgra.chunks_exact_mut(4) {
                 pixel.copy_from_slice(&[0x20, 0x80, 0xe0, 0xff]);
             }
