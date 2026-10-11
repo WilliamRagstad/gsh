@@ -21,7 +21,7 @@ jobs:
               protobuf-compiler cmake pkg-config libclang-dev \
               libxcb1-dev libxrandr-dev libdbus-1-dev \
               libpipewire-0.3-dev libwayland-dev wayland-protocols libdecor-0-dev \
-              libegl-dev libgl1-mesa-dev libgles2-mesa-dev libxkbcommon-dev \
+              libegl-dev libgbm-dev libdrm-dev libgl1-mesa-dev libgles2-mesa-dev libxkbcommon-dev \
               libx11-dev libxext-dev libxcursor-dev libxfixes-dev \
               libxi-dev libxss-dev libxtst-dev libasound2-dev libudev-dev
         - name: Set PKG_CONFIG_PATH environment variable
