@@ -53,14 +53,14 @@ Instrumentation overhead microbenchmark (same host, release Criterion, 30 sample
 | End-to-end input-to-photon p50/p95/p99 | Not measured; no instrumentation/test rig |
 | Frame production/encode/network/decode/presentation percentiles | Not measured |
 | FPS/drops/CPU/GPU/bandwidth/memory | Not measured |
-| Workspace unit/integration tests | Blocked at dependency compile; standalone libgsh unit suite passed (see latest count below) |
+| Historical baseline workspace unit/integration tests | Initially blocked at dependency compile; see current branch validation below |
 | Criterion frame processing | Partial CPU-only results above; process timed out before finishing suite |
 | Telemetry/framework tests | Default library test suite: 19 passed; WebRTC-feature suite: 21 passed (includes SDP codec-selection properties and a local SDP/ICE/data-channel input loopback) |
 | Telemetry scope overhead | Disabled 7.968–7.987 ns; enabled 56.628–56.678 ns in the synthetic empty scope benchmark |
 | WebRTC feature compile | `cargo check -p libgsh --features webrtc`: passed |
-| WebRTC loopback | Two local peers negotiated SDP/ICE, packetized one generated VP8 keyframe through the sender transform, and exchanged input; 1 test passed (included in 21 feature-suite tests). Remote decode/display and latency remain unmeasured. |
+| WebRTC loopback | Two local peers negotiated SDP/ICE, packetized a VP8 keyframe, software-decoded BGRA and Opus PCM, and exchanged input; 1 test passed. Display and input-to-photon latency remain unmeasured. |
 | Current `cargo build --workspace` | Passed after upgrading `xcap` 0.5.2 → 0.9.8 (PipeWire/libspa 0.10.1) |
-| Current `cargo test --workspace` | Passed; workspace includes 19 default `libgsh` tests; feature-gated WebRTC tests run separately |
+| Current `cargo test --workspace` | Passed; the `webrtc_demo` feature unifies into the workspace test build, running all 21 `libgsh` tests including native WebRTC loopback |
 | Current `cargo test -p libgsh --features webrtc --lib` | 21 passed, including H.264/VP8 SDP parsing and local two-peer ICE/data-channel/VP8 packetizer flow |
 | Same-host WebRTC loopback benchmark | Input dispatch 12.497–12.777 µs; VP8 packetize → software decode 11.761–11.794 ms (Criterion estimates, 20 samples; workload limitations above) |
 
