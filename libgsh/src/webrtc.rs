@@ -10,10 +10,11 @@ use prost::Message;
 use reactor_webrtc::{
     AudioTrack, DataChannel, EncodedVideoFrame as RtcEncodedVideoFrame, EncodedVideoTrack,
     EncoderFeedback as RtcEncoderFeedback, FrameAction, FrameDirection, FrameTransform,
-    IceCandidate, IceCandidateType, LocalVideoTrack, MediaKind, PeerConnection,
-    PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState, PreEncodedOptions,
-    RemoteTrack, RtcConfiguration, SdpType, SessionDescription, StreamKind, TrackVideoEncoder,
-    TransceiverDirection, VideoCodec as RtcVideoCodec, VideoTrackOptions,
+    IceCandidate, IceCandidateType, LocalVideoTrack as RtcLocalVideoTrack, MediaKind,
+    PeerConnection, PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState,
+    PreEncodedOptions, RemoteTrack, RtcConfiguration, SdpType, SessionDescription, StreamKind,
+    TrackVideoEncoder, TransceiverDirection, VideoCodec as RtcVideoCodec,
+    VideoFrame as RtcVideoFrame, VideoTrack as RtcVideoTrack, VideoTrackOptions,
 };
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -30,6 +31,7 @@ const ICE_QUEUE_CAPACITY: usize = 256;
 const MAX_CONTROL_MESSAGE: usize = 64 * 1024;
 const MAX_INPUT_MESSAGE: usize = 4096;
 const MAX_VIDEO_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RAW_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DECODED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_INPUT_BUFFERED: u64 = 64 * 1024;
 const MAX_FRAME_DIMENSION: u32 = 8192;
@@ -44,6 +46,14 @@ const MAX_AUDIO_FRAME_SAMPLES: usize = 96_000;
 pub enum VideoCodec {
     H264,
     Vp8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoInputMode {
+    /// The application owns encoding and pushes compressed H.264/VP8 access units.
+    PreEncoded,
+    /// The application pushes BGRA frames and libwebrtc selects its built-in encoder.
+    RawBgra,
 }
 
 /// Owned encoded access unit. The codec must match the one selected during SDP.
@@ -164,6 +174,10 @@ pub enum SessionError {
     EmptyVideoFrame,
     #[error("video frame dimensions do not match the configured track")]
     VideoDimensionsMismatch,
+    #[error("this session's video input mode does not accept this frame type")]
+    WrongVideoInputMode,
+    #[error("raw BGRA frame size does not match the configured dimensions")]
+    InvalidRawVideoFrame,
     #[error("input backlog exceeded its bound; {0} input event(s) were dropped; reconcile remote input state")]
     InputQueueOverflow(u64),
     #[error("control backlog exceeded its bound; {0} control message(s) were dropped")]
@@ -227,6 +241,11 @@ pub struct CandidateMessage {
 
 type ChannelSlot = Arc<Mutex<Option<DataChannel>>>;
 
+enum SessionVideoTrack {
+    PreEncoded(EncodedVideoTrack),
+    Raw(RtcVideoTrack),
+}
+
 #[derive(Clone)]
 struct ChannelRouter {
     input_channel: ChannelSlot,
@@ -243,7 +262,7 @@ struct ChannelRouter {
 pub struct GshSession {
     _factory: PeerConnectionFactory,
     peer: PeerConnection,
-    video: Option<EncodedVideoTrack>,
+    video: Option<SessionVideoTrack>,
     _audio: Option<AudioTrack>,
     input_channel: ChannelSlot,
     control_channel: ChannelSlot,
@@ -298,6 +317,46 @@ impl GshSession {
         height: u32,
         codec_preferences: &[VideoCodec],
     ) -> Result<Self> {
+        Self::new_with_video_input(
+            factory,
+            config,
+            role,
+            width,
+            height,
+            VideoInputMode::PreEncoded,
+            codec_preferences,
+        )
+    }
+
+    /// Build a software-capable path where the application supplies BGRA and
+    /// libwebrtc performs the negotiated video encoding.
+    pub fn new_raw_video(
+        factory: PeerConnectionFactory,
+        config: RtcConfiguration,
+        role: SessionRole,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
+        Self::new_with_video_input(
+            factory,
+            config,
+            role,
+            width,
+            height,
+            VideoInputMode::RawBgra,
+            &[VideoCodec::Vp8],
+        )
+    }
+
+    pub fn new_with_video_input(
+        factory: PeerConnectionFactory,
+        config: RtcConfiguration,
+        role: SessionRole,
+        width: u32,
+        height: u32,
+        video_input_mode: VideoInputMode,
+        codec_preferences: &[VideoCodec],
+    ) -> Result<Self> {
         if width == 0 || height == 0 || width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION
         {
             return Err(SessionError::WebRtc(format!(
@@ -310,20 +369,29 @@ impl GshSession {
         }
 
         let (video, audio) = if role == SessionRole::Offerer {
-            let mut video_options = VideoTrackOptions::default();
-            video_options.encoder = Some(TrackVideoEncoder::PreEncoded(PreEncodedOptions::new(
-                width, height,
-            )));
-            let video = match factory
-                .create_video_track_with_options("gsh-screen", video_options)
-                .map_err(web_rtc_error)?
-            {
-                LocalVideoTrack::Encoded(track) => track,
-                LocalVideoTrack::Raw(_) => {
-                    return Err(SessionError::WebRtc(
-                        "pre-encoded video track was not created".into(),
-                    ));
+            let video = match video_input_mode {
+                VideoInputMode::PreEncoded => {
+                    let mut options = VideoTrackOptions::default();
+                    options.encoder = Some(TrackVideoEncoder::PreEncoded(PreEncodedOptions::new(
+                        width, height,
+                    )));
+                    match factory
+                        .create_video_track_with_options("gsh-screen", options)
+                        .map_err(web_rtc_error)?
+                    {
+                        RtcLocalVideoTrack::Encoded(track) => SessionVideoTrack::PreEncoded(track),
+                        RtcLocalVideoTrack::Raw(_) => {
+                            return Err(SessionError::WebRtc(
+                                "pre-encoded video track was not created".into(),
+                            ));
+                        }
+                    }
                 }
+                VideoInputMode::RawBgra => SessionVideoTrack::Raw(
+                    factory
+                        .create_video_track("gsh-screen")
+                        .map_err(web_rtc_error)?,
+                ),
             };
             let audio = factory
                 .create_audio_track("gsh-audio")
@@ -359,7 +427,7 @@ impl GshSession {
             dropped_control: dropped_control.clone(),
             telemetry: telemetry.clone(),
         };
-        if let Some(video) = video.as_ref() {
+        if let Some(SessionVideoTrack::PreEncoded(video)) = video.as_ref() {
             let dropped_feedback = dropped_feedback.clone();
             video.on_encoder_feedback(move |feedback| {
                 let event = match feedback {
@@ -480,7 +548,10 @@ impl GshSession {
                 .add_transceiver(MediaKind::Video, TransceiverDirection::SendOnly)
                 .map_err(web_rtc_error)?;
             video_transceiver
-                .set_track(video.track())
+                .set_track(match video {
+                    SessionVideoTrack::PreEncoded(track) => track.track(),
+                    SessionVideoTrack::Raw(track) => track,
+                })
                 .map_err(web_rtc_error)?;
             video_transceiver
                 .set_codec_preferences(&rtc_codec_preferences)
@@ -752,7 +823,7 @@ impl GshSession {
         &self.telemetry
     }
 
-    /// Push externally hardware-encoded H.264 Annex-B frames to the RTP track.
+    /// Push externally encoded H.264/VP8 access units to the RTP track.
     pub fn send_video(
         &self,
         frame: EncodedVideoFrame,
@@ -778,8 +849,12 @@ impl GshSession {
                 frame,
             ));
         }
-        let Some(video) = self.video.as_ref() else {
-            return Err(video_submit_error(SessionError::MediaNotAvailable, frame));
+        let video = match self.video.as_ref() {
+            Some(SessionVideoTrack::PreEncoded(video)) => video,
+            Some(SessionVideoTrack::Raw(_)) => {
+                return Err(video_submit_error(SessionError::WrongVideoInputMode, frame));
+            }
+            None => return Err(video_submit_error(SessionError::MediaNotAvailable, frame)),
         };
         if self
             .video_frames_in_flight
@@ -808,6 +883,52 @@ impl GshSession {
                     error: web_rtc_error(error),
                     frame: None,
                 })
+            }
+        }
+    }
+
+    /// Push CPU-resident BGRA pixels to libwebrtc's built-in video encoder.
+    /// This is the portable software-fallback path; platform GPU-native surface
+    /// handoff is a separate adapter and is not implied by this call.
+    pub fn send_raw_video(&self, bgra: &[u8]) -> Result<()> {
+        let _timer = self.telemetry.time(Stage::WebRtcSend);
+        if self.video_failed.load(Ordering::Relaxed) {
+            return Err(SessionError::VideoPipelineFailed);
+        }
+        let video = match self.video.as_ref() {
+            Some(SessionVideoTrack::Raw(video)) => video,
+            Some(SessionVideoTrack::PreEncoded(_)) => {
+                return Err(SessionError::WrongVideoInputMode)
+            }
+            None => return Err(SessionError::MediaNotAvailable),
+        };
+        let expected = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if expected != Some(bgra.len()) || bgra.len() > MAX_RAW_FRAME_BYTES {
+            return Err(SessionError::InvalidRawVideoFrame);
+        }
+        if self.negotiated_video_codec().is_none() {
+            return Err(SessionError::VideoCodecUnavailable);
+        }
+        if self
+            .video_frames_in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                if count < MAX_VIDEO_FRAMES_IN_FLIGHT {
+                    Some(count + 1)
+                } else {
+                    None
+                }
+            })
+            .is_err()
+        {
+            return Err(SessionError::VideoBackpressure);
+        }
+        match video.push_frame(RtcVideoFrame::new(bgra, self.width, self.height)) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.video_frames_in_flight.fetch_sub(1, Ordering::Relaxed);
+                Err(web_rtc_error(error))
             }
         }
     }
@@ -1221,6 +1342,68 @@ mod tests {
             assert!(stats.outbound.iter().any(|stream| stream.codec.is_some()));
             let remote_stats = answerer.stats().unwrap();
             assert!(!remote_stats.inbound.is_empty());
+        });
+    }
+
+    #[test]
+    fn raw_bgra_path_uses_libwebrtc_software_fallback() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let offerer = GshSession::new_raw_video(
+                PeerConnectionFactory::builder().build().unwrap(),
+                RtcConfiguration::default(),
+                SessionRole::Offerer,
+                320,
+                240,
+            )
+            .unwrap();
+            let answerer = GshSession::new_with_video_input(
+                PeerConnectionFactory::builder().build().unwrap(),
+                RtcConfiguration::default(),
+                SessionRole::Answerer,
+                320,
+                240,
+                VideoInputMode::RawBgra,
+                &[VideoCodec::Vp8],
+            )
+            .unwrap();
+            let answer = answerer
+                .accept_offer(offerer.create_offer().unwrap())
+                .unwrap();
+            offerer.accept_answer(answer).unwrap();
+
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+            loop {
+                for candidate in offerer.drain_ice_candidates().await.unwrap() {
+                    answerer.add_ice_candidate(candidate).unwrap();
+                }
+                for candidate in answerer.drain_ice_candidates().await.unwrap() {
+                    offerer.add_ice_candidate(candidate).unwrap();
+                }
+                if offerer.is_connected() && answerer.is_connected() {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "ICE did not connect"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            let mut bgra = vec![0; 320 * 240 * 4];
+            for pixel in bgra.chunks_exact_mut(4) {
+                pixel.copy_from_slice(&[0x20, 0x80, 0xe0, 0xff]);
+            }
+            offerer.send_raw_video(&bgra).unwrap();
+            let decoded = tokio::time::timeout(Duration::from_secs(2), answerer.recv_video())
+                .await
+                .expect("software-decoded frame timed out")
+                .expect("video track closed");
+            assert_eq!((decoded.width, decoded.height), (320, 240));
+            assert_eq!(decoded.bgra.len(), 320 * 240 * 4);
         });
     }
 }

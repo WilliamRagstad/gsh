@@ -13,7 +13,7 @@
 <body>
   <h1>GSH WebRTC demo</h1>
   <p>Local-only test client. Click the video and move the pointer to send input.</p>
-  <video id="video" autoplay playsinline controls></video>
+  <video id="video" autoplay playsinline controls muted></video>
   <pre id="status">Connecting…</pre>
   <script>
     const status = document.querySelector('#status');
@@ -45,17 +45,26 @@
       message.push(...mouse);
       inputChannel.send(new Uint8Array(message));
     }
+    window.__gshSendMouseMove = sendMouseMove;
 
     signaling.onopen = () => { status.textContent = 'Waiting for server offer…'; };
     signaling.onmessage = async ({ data }) => {
       const message = JSON.parse(data);
       if (message.type === 'offer') {
         peer = new RTCPeerConnection({ iceServers: [] });
+        window.__gshPeer = peer;
         peer.ontrack = event => {
           if (event.streams[0]) video.srcObject = event.streams[0];
+          status.textContent = `Remote ${event.track.kind} track received`;
         };
         peer.ondatachannel = event => {
-          if (event.channel.label === 'gsh-input-v1') inputChannel = event.channel;
+          if (event.channel.label === 'gsh-input-v1') {
+            inputChannel = event.channel;
+            window.__gshInput = inputChannel;
+          }
+        };
+        peer.onconnectionstatechange = () => {
+          status.textContent = `Peer state: ${peer.connectionState}`;
         };
         peer.onicecandidate = event => {
           if (event.candidate && signaling.readyState === WebSocket.OPEN) {

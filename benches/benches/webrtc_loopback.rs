@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use libgsh::{
     shared::protocol::UserInput,
-    webrtc::{EncodedVideoFrame, GshSession, SessionRole, VideoCodec},
+    webrtc::{EncodedVideoFrame, GshSession, SessionRole, VideoCodec, VideoInputMode},
 };
 use reactor_webrtc::{PeerConnectionFactory, RtcConfiguration};
 use std::time::Duration;
@@ -20,22 +20,46 @@ const VP8_KEYFRAME: &[u8] = &[
     0x38, 0x7b, 0x27, 0x38, 0x7b, 0x7a, 0xf4, 0x00, 0xfe, 0xff, 0xab, 0x50, 0x80,
 ];
 
-async fn connect_local_peers() -> (GshSession, GshSession) {
-    let offerer = GshSession::new(
-        PeerConnectionFactory::builder().build().unwrap(),
-        RtcConfiguration::default(),
-        SessionRole::Offerer,
-        320,
-        240,
-    )
+async fn connect_local_peers(raw_bgra: bool) -> (GshSession, GshSession) {
+    let offerer_factory = PeerConnectionFactory::builder().build().unwrap();
+    let answerer_factory = PeerConnectionFactory::builder().build().unwrap();
+    let offerer = if raw_bgra {
+        GshSession::new_raw_video(
+            offerer_factory,
+            RtcConfiguration::default(),
+            SessionRole::Offerer,
+            320,
+            240,
+        )
+    } else {
+        GshSession::new(
+            offerer_factory,
+            RtcConfiguration::default(),
+            SessionRole::Offerer,
+            320,
+            240,
+        )
+    }
     .unwrap();
-    let answerer = GshSession::new(
-        PeerConnectionFactory::builder().build().unwrap(),
-        RtcConfiguration::default(),
-        SessionRole::Answerer,
-        320,
-        240,
-    )
+    let answerer = if raw_bgra {
+        GshSession::new_with_video_input(
+            answerer_factory,
+            RtcConfiguration::default(),
+            SessionRole::Answerer,
+            320,
+            240,
+            VideoInputMode::RawBgra,
+            &[VideoCodec::Vp8],
+        )
+    } else {
+        GshSession::new(
+            answerer_factory,
+            RtcConfiguration::default(),
+            SessionRole::Answerer,
+            320,
+            240,
+        )
+    }
     .unwrap();
 
     let offer = offerer.create_offer().unwrap();
@@ -82,7 +106,7 @@ fn bench_loopback(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
-    let (offerer, answerer) = runtime.block_on(connect_local_peers());
+    let (offerer, answerer) = runtime.block_on(connect_local_peers(false));
     let mut group = c.benchmark_group("webrtc_local_loopback");
 
     let input = UserInput::default();
@@ -133,6 +157,32 @@ fn bench_loopback(c: &mut Criterion) {
             })
         });
     }
+
+    let (raw_offer, raw_answer) = runtime.block_on(connect_local_peers(true));
+    let raw_bgra = vec![0x30_u8; 320 * 240 * 4];
+    group.bench_function("bgra_to_vp8_encode_and_software_decode", |b| {
+        b.iter_custom(|iterations| {
+            runtime.block_on(async {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iterations {
+                    let started = tokio::time::Instant::now();
+                    loop {
+                        match raw_offer.send_raw_video(black_box(&raw_bgra)) {
+                            Ok(()) => break,
+                            Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
+                                tokio::time::sleep(Duration::from_micros(100)).await;
+                            }
+                            Err(error) => panic!("raw video path failed: {error}"),
+                        }
+                    }
+                    let decoded = raw_answer.recv_video().await.unwrap();
+                    black_box((decoded.width, decoded.height, decoded.bgra.len()));
+                    elapsed += started.elapsed();
+                }
+                elapsed
+            })
+        })
+    });
 
     group.finish();
 }

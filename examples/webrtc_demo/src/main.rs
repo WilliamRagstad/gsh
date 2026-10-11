@@ -166,6 +166,12 @@ async fn run_session_inner(socket: WebSocket) -> anyhow::Result<()> {
             input = session.recv_input() => {
                 let input: UserInput = input?;
                 input_count += 1;
+                if input_count == 1 {
+                    send_signal(&signal_tx, json!({
+                        "type": "status",
+                        "message": "First browser input reached the GSH session"
+                    })).await?;
+                }
                 if input_count.is_power_of_two() {
                     eprintln!("received input #{input_count}: {input:?}");
                 }
