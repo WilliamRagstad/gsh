@@ -1,8 +1,9 @@
 //! Concrete v1 WebRTC session backend.
 //!
-//! Media is carried on native RTP tracks; input and control use separate
-//! reliable data channels. This module intentionally does not define a generic
-//! transport trait. Build with `--features webrtc` to include libwebrtc.
+//! Media is carried on native RTP tracks; reliable transitions/control and
+//! replaceable realtime state use separate data channels. This module
+//! intentionally does not define a generic transport trait. Build with
+//! `--features webrtc` to include libwebrtc.
 
 use crate::shared::protocol::UserInput;
 use crate::telemetry::{PipelineTelemetry, Stage};
@@ -1457,6 +1458,7 @@ fn rtc_codec_preferences(preferences: &[VideoCodec]) -> Vec<RtcVideoCodec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reactor_webrtc::DataChannelState;
     use std::time::Duration;
 
     // Single 320x240 VP8 keyframe produced by libvpx (black color source).
@@ -1735,6 +1737,163 @@ mod tests {
                     .expect("paced software-decoded frame timed out")
                     .expect("video track closed");
                 assert_eq!((decoded.width, decoded.height), (320, 240));
+            }
+        });
+    }
+
+    #[test]
+    fn answerer_publisher_streams_raw_video_to_browser_style_offer() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (ice_tx, mut ice_rx) = tokio::sync::mpsc::unbounded_channel();
+            let decoded_frames = Arc::new(AtomicUsize::new(0));
+            let frame_counter = decoded_frames.clone();
+            let remote_video_tracks = Arc::new(AtomicUsize::new(0));
+            let track_counter = remote_video_tracks.clone();
+            let remote_tracks = Arc::new(Mutex::new(Vec::new()));
+            let track_keepalive = remote_tracks.clone();
+            let observer = PeerConnectionObserver::new()
+                .on_ice_candidate(move |candidate| {
+                    let _ = ice_tx.send(candidate);
+                })
+                .on_track(move |track| {
+                    if let RemoteTrack::Video(video) = &track {
+                        track_counter.fetch_add(1, Ordering::Relaxed);
+                        let frame_counter = frame_counter.clone();
+                        video.on_frame(move |_| {
+                            frame_counter.fetch_add(1, Ordering::Relaxed);
+                        });
+                    }
+                    track_keepalive
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(track);
+                });
+            let browser_factory = PeerConnectionFactory::builder().build().unwrap();
+            let browser = browser_factory
+                .create_peer_connection(&RtcConfiguration::default(), observer)
+                .unwrap();
+            browser
+                .add_transceiver(MediaKind::Video, TransceiverDirection::RecvOnly)
+                .unwrap();
+            browser
+                .add_transceiver(MediaKind::Audio, TransceiverDirection::RecvOnly)
+                .unwrap();
+            let control = browser.create_data_channel(GSH_CONTROL_CHANNEL).unwrap();
+            let realtime = browser.create_data_channel(REALTIME_CHANNEL).unwrap();
+
+            let session = GshSession::new_raw_video(
+                PeerConnectionFactory::builder().build().unwrap(),
+                RtcConfiguration::default(),
+                SessionRole::AnswererPublisher,
+                320,
+                240,
+            )
+            .unwrap();
+            let offer = browser.create_offer().unwrap();
+            browser.set_local_description(&offer).unwrap();
+            let answer = session
+                .accept_offer(SdpMessage {
+                    kind: DescriptionKind::Offer,
+                    sdp: offer.sdp,
+                })
+                .unwrap();
+            browser
+                .set_remote_description(&SessionDescription {
+                    kind: SdpType::Answer,
+                    sdp: answer.sdp,
+                })
+                .unwrap();
+
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+            loop {
+                while let Ok(candidate) = ice_rx.try_recv() {
+                    session
+                        .add_ice_candidate(CandidateMessage {
+                            candidate: candidate.candidate,
+                            sdp_mid: candidate.sdp_mid,
+                            sdp_mline_index: candidate.sdp_mline_index,
+                        })
+                        .unwrap();
+                }
+                for candidate in session.drain_ice_candidates().await.unwrap() {
+                    browser
+                        .add_ice_candidate(&IceCandidate {
+                            candidate: candidate.candidate,
+                            sdp_mid: candidate.sdp_mid,
+                            sdp_mline_index: candidate.sdp_mline_index,
+                        })
+                        .unwrap();
+                }
+                if session.is_connected() {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "browser-style peer did not connect"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            let channel_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            while control.state() != DataChannelState::Open
+                || realtime.state() != DataChannelState::Open
+            {
+                assert!(
+                    tokio::time::Instant::now() < channel_deadline,
+                    "browser-style input channels did not open"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            control.send(b"control-transition", true).unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), session.recv_control())
+                    .await
+                    .expect("control message receive timed out")
+                    .unwrap(),
+                b"control-transition"
+            );
+            realtime.send(b"latest-state", true).unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), session.recv_realtime())
+                    .await
+                    .expect("realtime message receive timed out")
+                    .unwrap(),
+                b"latest-state"
+            );
+
+            let bgra = vec![0x40; 320 * 240 * 4];
+            for _ in 0..10 {
+                let admission_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+                loop {
+                    match session.send_raw_video(&bgra) {
+                        Ok(()) => break,
+                        Err(SessionError::VideoBackpressure) => {
+                            assert!(tokio::time::Instant::now() < admission_deadline);
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                        }
+                        Err(error) => panic!("answerer raw video failed: {error}"),
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(34)).await;
+            }
+            let frame_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+            while decoded_frames.load(Ordering::Relaxed) == 0 {
+                if tokio::time::Instant::now() >= frame_deadline {
+                    let stats = browser.get_stats().unwrap();
+                    panic!(
+                        "answerer raw VP8 frame was not decoded (codec={:?}, pending={}, remote video tracks={}, inbound={:?}, outbound={:?})",
+                        session.negotiated_video_codec(),
+                        session.video_frames_pending(),
+                        remote_video_tracks.load(Ordering::Relaxed),
+                        stats.inbound_rtp,
+                        stats.outbound_rtp,
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
     }
