@@ -170,6 +170,20 @@ async fn run_session_inner(socket: WebSocket) -> anyhow::Result<()> {
                     eprintln!("received input #{input_count}: {input:?}");
                 }
             }
+            feedback = session.recv_encoder_feedback() => {
+                match feedback? {
+                    libgsh::webrtc::VideoEncoderFeedback::RequestKeyFrame => {
+                        // The demo sends a keyframe for every frame.
+                        eprintln!("encoder feedback: keyframe requested (already satisfied)");
+                    }
+                    libgsh::webrtc::VideoEncoderFeedback::RateUpdate {
+                        bitrate_bps,
+                        framerate_fps,
+                    } => {
+                        eprintln!("encoder feedback: {bitrate_bps} bps @ {framerate_fps:.1} fps");
+                    }
+                }
+            }
             tick = pacer.wait_next() => {
                 if session.negotiated_video_codec() == Some(VideoCodec::Vp8) {
                     let result = session.send_video(EncodedVideoFrame {
