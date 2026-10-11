@@ -5,7 +5,7 @@ use std::mem;
 ///
 /// Usage pattern:
 /// - Service/example keeps a `cur_frame: Vec<u8>` that it fills each tick.
-/// - Call `optimize_segments(&cur_frame, ..., &mut prev_frame, pixel_bytes)` to compute diffs
+/// - Call `optimize_segments(&cur_frame, ..., &prev_frame, pixel_bytes)` to compute diffs
 ///   against the current previous-frame buffer.
 /// - After sending the frame, call `cur_frame = prev_frame.update_with_frame(cur_frame)`
 ///   which moves ownership of `cur_frame` into the prev-frame storage and returns the
@@ -181,52 +181,93 @@ pub fn optimize_segments(
     optimized_segments
 }
 
-// fn find_diffs(
-//     full_frame_data: &[u8],
-//     prev_frame: &[u8],
-//     width: usize,
-//     height: usize,
-//     pixel_bytes: usize,
-// ) -> Vec<(usize, usize, usize, usize)> {
-//     let mut diffs = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     for y in 0..height {
-//         for x in 0..width {
-//             let start = (y * width + x) * pixel_bytes;
-//             let end = start + pixel_bytes;
-//             if full_frame_data[start..end] != prev_frame[start..end] {
-//                 diffs.push((x, y, pixel_bytes, 1));
-//             }
-//         }
-//     }
+    #[test]
+    fn test_full_frame_segment() {
+        let data = vec![255u8; 100 * 100 * 4]; // 100x100 RGBA
+        let segments = full_frame_segment(&data, 100, 100);
 
-//     diffs
-// }
+        assert_eq!(segments.len(), 1);
+        let segment = &segments[0];
+        assert_eq!(segment.x, 0);
+        assert_eq!(segment.y, 0);
+        assert_eq!(segment.width, 100);
+        assert_eq!(segment.height, 100);
+        assert_eq!(segment.data.len(), 100 * 100 * 4);
+    }
 
-// fn optimal_diff_groups(
-//     diffs: &[(usize, usize, usize, usize)],
-//     width: usize,
-//     height: usize,
-// ) -> Vec<(usize, usize, usize, usize)> {
-//     let mut groups = Vec::new();
-//     let mut current_group = None;
+    #[test]
+    fn test_optimize_segments_identical_frames() {
+        let width = 10;
+        let height = 10;
+        let pixel_bytes = 4;
+        let data = vec![128u8; width * height * pixel_bytes];
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(data.clone());
 
-//     for &(x, y, pixel_bytes, height) in diffs {
-//         if let Some((group_x, group_y, group_width, group_height)) = current_group {
-//             if x == group_x && y == group_y + group_height {
-//                 current_group = Some((group_x, group_y, group_width, group_height + height));
-//             } else {
-//                 groups.push((group_x, group_y, group_width, group_height));
-//                 current_group = Some((x, y, pixel_bytes, height));
-//             }
-//         } else {
-//             current_group = Some((x, y, pixel_bytes, height));
-//         }
-//     }
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
 
-//     if let Some((group_x, group_y, group_width, group_height)) = current_group {
-//         groups.push((group_x, group_y, group_width, group_height));
-//     }
+        // Identical frames should produce no segments
+        assert_eq!(segments.len(), 0);
+    }
 
-//     groups
-// }
+    #[test]
+    fn test_optimize_segments_single_row_change() {
+        let width = 10;
+        let height = 10;
+        let pixel_bytes = 4;
+        let mut data = vec![128u8; width * height * pixel_bytes];
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(vec![128u8; width * height * pixel_bytes]);
+
+        // Change one row
+        for i in 0..width * pixel_bytes {
+            data[5 * width * pixel_bytes + i] = 255;
+        }
+
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
+
+        // A single changed row still needs to be transmitted
+        assert_eq!(segments.len(), 1);
+    }
+
+    #[test]
+    fn test_optimize_segments_large_change() {
+        let width = 10;
+        let height = 10;
+        let pixel_bytes = 4;
+        let data = vec![128u8; width * height * pixel_bytes];
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(vec![255u8; width * height * pixel_bytes]); // Different color
+
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
+
+        // Completely different frames should produce segments
+        assert!(segments.len() > 0);
+    }
+
+    #[test]
+    fn test_frame_segment_data_integrity() {
+        let width = 5;
+        let height = 5;
+        let pixel_bytes = 4;
+        let mut data = vec![0u8; width * height * pixel_bytes];
+
+        // Create a gradient pattern
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * pixel_bytes;
+                data[idx] = (x * 255 / width) as u8; // R
+                data[idx + 1] = (y * 255 / height) as u8; // G
+                data[idx + 2] = 128; // B
+                data[idx + 3] = 255; // A
+            }
+        }
+
+        let segments = full_frame_segment(&data, width, height);
+        assert_eq!(segments[0].data, data);
+    }
+}

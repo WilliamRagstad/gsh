@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["libgsh", "client", "examples/*"]
+members = ["libgsh", "client", "examples/*", "benches"]
 
 [workspace.dependencies]
 libgsh = { path = "libgsh" }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio-test = "0.4"
