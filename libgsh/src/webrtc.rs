@@ -10,10 +10,10 @@ use prost::Message;
 use reactor_webrtc::{
     AudioTrack, DataChannel, EncodedVideoFrame as RtcEncodedVideoFrame, EncodedVideoTrack,
     EncoderFeedback as RtcEncoderFeedback, FrameAction, FrameDirection, FrameTransform,
-    IceCandidate, LocalVideoTrack, MediaKind, PeerConnection, PeerConnectionFactory,
-    PeerConnectionObserver, PeerConnectionState, PreEncodedOptions, RemoteTrack, RtcConfiguration,
-    SdpType, SessionDescription, TrackVideoEncoder, TransceiverDirection,
-    VideoCodec as RtcVideoCodec, VideoTrackOptions,
+    IceCandidate, IceCandidateType, LocalVideoTrack, MediaKind, PeerConnection,
+    PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState, PreEncodedOptions,
+    RemoteTrack, RtcConfiguration, SdpType, SessionDescription, StreamKind, TrackVideoEncoder,
+    TransceiverDirection, VideoCodec as RtcVideoCodec, VideoTrackOptions,
 };
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -84,6 +84,60 @@ pub enum VideoEncoderFeedback {
         bitrate_bps: u32,
         framerate_fps: f64,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaStreamKind {
+    Audio,
+    Video,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct InboundMediaStats {
+    pub kind: MediaStreamKind,
+    pub codec: Option<String>,
+    pub bytes_received: u64,
+    pub packets_received: u32,
+    pub packets_lost: i32,
+    pub nack_count: u32,
+    pub pli_count: u32,
+    pub frames_per_second: f64,
+    pub frames_decoded: u32,
+    pub frames_dropped: u32,
+    pub jitter_s: f64,
+    pub average_jitter_buffer_delay_s: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OutboundMediaStats {
+    pub kind: MediaStreamKind,
+    pub codec: Option<String>,
+    pub bytes_sent: u64,
+    pub packets_sent: u64,
+    pub packets_lost: i32,
+    pub fraction_lost: f64,
+    pub nack_count: u32,
+    pub pli_count: u32,
+    pub frames_per_second: f64,
+    pub frames_encoded: u32,
+    pub target_bitrate_bps: f64,
+    pub round_trip_time_s: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedPathStats {
+    pub round_trip_time_s: Option<f64>,
+    pub available_incoming_bitrate_bps: Option<f64>,
+    pub available_outgoing_bitrate_bps: Option<f64>,
+    pub is_relay: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GshSessionStats {
+    pub inbound: Vec<InboundMediaStats>,
+    pub outbound: Vec<OutboundMediaStats>,
+    pub selected_path: Option<SelectedPathStats>,
 }
 
 /// Submission failure. `frame` is returned for validation/backpressure errors;
@@ -619,6 +673,66 @@ impl GshSession {
         self.connected.load(Ordering::Relaxed)
     }
 
+    /// Collect a compact WebRTC transport/media stats snapshot. The native
+    /// stats request is synchronous (typically a few milliseconds, with a
+    /// bounded upstream timeout); call it off the frame/input hot path.
+    pub fn stats(&self) -> Result<GshSessionStats> {
+        let report = self.peer.get_stats().map_err(web_rtc_error)?;
+        let inbound = report
+            .inbound_rtp
+            .into_iter()
+            .map(|stats| InboundMediaStats {
+                kind: media_stream_kind(stats.kind),
+                codec: stats.codec_mime_type.clone(),
+                bytes_received: stats.bytes_received,
+                packets_received: stats.packets_received,
+                packets_lost: stats.packets_lost,
+                nack_count: stats.nack_count,
+                pli_count: stats.pli_count,
+                frames_per_second: stats.frames_per_second,
+                frames_decoded: stats.frames_decoded,
+                frames_dropped: stats.frames_dropped,
+                jitter_s: stats.jitter_s,
+                average_jitter_buffer_delay_s: stats
+                    .average_jitter_buffer_delay()
+                    .map(|delay| delay.as_secs_f64()),
+            })
+            .collect();
+        let outbound = report
+            .outbound_rtp
+            .into_iter()
+            .map(|stats| OutboundMediaStats {
+                kind: media_stream_kind(stats.kind),
+                codec: stats.codec_mime_type,
+                bytes_sent: stats.bytes_sent,
+                packets_sent: stats.packets_sent,
+                packets_lost: stats.packets_lost,
+                fraction_lost: stats.fraction_lost,
+                nack_count: stats.nack_count,
+                pli_count: stats.pli_count,
+                frames_per_second: stats.frames_per_second,
+                frames_encoded: stats.frames_encoded,
+                target_bitrate_bps: stats.target_bitrate_bps,
+                round_trip_time_s: nonzero(stats.round_trip_time_s),
+            })
+            .collect();
+        let selected_path = report
+            .candidate_pairs
+            .into_iter()
+            .find(|pair| pair.nominated)
+            .map(|pair| SelectedPathStats {
+                round_trip_time_s: nonzero(pair.current_round_trip_time_s),
+                available_incoming_bitrate_bps: nonzero(pair.available_incoming_bitrate_bps),
+                available_outgoing_bitrate_bps: nonzero(pair.available_outgoing_bitrate_bps),
+                is_relay: pair.local_candidate_type == IceCandidateType::Relay,
+            });
+        Ok(GshSessionStats {
+            inbound,
+            outbound,
+            selected_path,
+        })
+    }
+
     pub fn negotiated_video_codec(&self) -> Option<VideoCodec> {
         *self
             .negotiated_video_codec
@@ -862,6 +976,18 @@ fn web_rtc_error(error: impl std::fmt::Display) -> SessionError {
     SessionError::WebRtc(error.to_string())
 }
 
+fn media_stream_kind(kind: StreamKind) -> MediaStreamKind {
+    match kind {
+        StreamKind::Audio => MediaStreamKind::Audio,
+        StreamKind::Video => MediaStreamKind::Video,
+        StreamKind::Unknown => MediaStreamKind::Unknown,
+    }
+}
+
+fn nonzero(value: f64) -> Option<f64> {
+    (value.is_finite() && value > 0.0).then_some(value)
+}
+
 fn video_submit_error(error: SessionError, frame: EncodedVideoFrame) -> VideoSubmitError {
     VideoSubmitError {
         error,
@@ -1066,6 +1192,12 @@ mod tests {
             assert_eq!(audio.sample_rate, 48_000);
             assert!(audio.channels >= 1);
             assert!(!audio.pcm.is_empty());
+
+            let stats = offerer.stats().unwrap();
+            assert!(!stats.outbound.is_empty());
+            assert!(stats.outbound.iter().any(|stream| stream.codec.is_some()));
+            let remote_stats = answerer.stats().unwrap();
+            assert!(!remote_stats.inbound.is_empty());
         });
     }
 }
