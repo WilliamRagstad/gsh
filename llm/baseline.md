@@ -11,7 +11,7 @@
 
 Command: `cargo test --workspace`
 
-Result: **blocked before project tests**. Build failed compiling cached `libspa v0.8.0` (transitive PipeWire dependency) at `pod/builder.rs:38-39`, because generated `spa_pod_builder` exposes `_address` rather than fields `data` and `size`. SDL3 and PipeWire sys crates were being compiled. No project test result is available from this run.
+Historical baseline result: **blocked before project tests**. Build failed compiling cached `libspa v0.8.0` (transitive PipeWire dependency of `xcap 0.5.2`) at `pod/builder.rs:38-39`, because generated `spa_pod_builder` exposes `_address` rather than fields `data` and `size`. This is the pre-rewrite baseline environment result, not the current branch result.
 
 Command: `cargo bench -p gsh-benchmarks --bench frame_processing`
 
@@ -29,7 +29,7 @@ These characterize isolated CPU compression only, on a host whose CPU model was 
 ## Reproduction and next steps
 
 1. Record `rustc -Vv`, `cargo -V`, `uname -a`, CPU/GPU/driver, SDL/PipeWire versions, and network topology.
-2. Resolve the dependency/build environment issue (do not patch registry source as a project fix); rerun `cargo test --workspace`.
+2. The blocker was resolved by upgrading the remote-desktop example to `xcap 0.9.8` (PipeWire/libspa 0.10.1); do not patch registry sources.
 3. Run `cargo bench -p gsh-benchmarks --bench frame_processing -- --sample-size 30` (or use a longer timeout) and preserve Criterion output.
 4. The feature-gated WebRTC input loopback now validates SDP/ICE/data-channel behavior. Add media loopback and server/client presentation before reporting frame-to-display or input-to-photon percentiles. Cross-host measurements require synchronized clocks or a one-way latency method with uncertainty.
 
@@ -48,5 +48,8 @@ Instrumentation overhead microbenchmark (same host, release Criterion, 30 sample
 | Telemetry scope overhead | Disabled 7.968–7.987 ns; enabled 56.628–56.678 ns in the synthetic empty scope benchmark |
 | WebRTC feature compile | `cargo check -p libgsh --features webrtc`: passed |
 | WebRTC loopback | Two local peers negotiated SDP/ICE, packetized one generated VP8 keyframe through the sender transform, and exchanged input; 1 test passed (included in 21 feature-suite tests). Remote decode/display and latency remain unmeasured. |
+| Current `cargo build --workspace` | Passed after upgrading `xcap` 0.5.2 → 0.9.8 (PipeWire/libspa 0.10.1) |
+| Current `cargo test --workspace` | Passed; workspace includes 19 default `libgsh` tests; feature-gated WebRTC tests run separately |
+| Current `cargo test -p libgsh --features webrtc --lib` | 21 passed, including H.264/VP8 SDP parsing and local two-peer ICE/data-channel/VP8 packetizer flow |
 
 This report is deliberately explicit about unverified items. Update it with host metadata and comparable measurements at each verified milestone.

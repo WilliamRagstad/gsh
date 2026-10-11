@@ -46,6 +46,6 @@ Provisional path: prototype `reactor-webrtc` first because it is the inspected c
 - Keep reliable key/button transitions distinct from replaceable pointer positions; never lose relative deltas.
 - Don't describe successful submission/present as photons observed. Cross-host one-way timing needs clock sync and uncertainty reporting.
 
-## Baseline constraints
+## Baseline constraints and remediation
 
-The existing Criterion frame benchmark measures CPU zstd/segment helpers only, not capture → network → decode → display. The current Linux workspace build/test is presently blocked by a dependency compile error in cached `libspa 0.8.0` (`spa_pod_builder` has no `data`/`size` fields; only `_address`) while compiling `pipewire-sys`. The experimental WebRTC backend has a local SDP/ICE/data-channel input loopback test, but not a media-rendering end-to-end test. See [`baseline.md`](baseline.md). No end-to-end baseline numbers are claimed.
+The original Criterion frame benchmark measures CPU zstd/segment helpers only, not capture → network → decode → display. The first workspace build/test on baseline dependencies failed in cached `libspa 0.8.0` (`spa_pod_builder` has no `data`/`size` fields; only `_address`) through `xcap 0.5.2`. The remote-desktop example was upgraded to `xcap 0.9.8`, which brings PipeWire/libspa 0.10.1; `cargo build --workspace` and `cargo test --workspace` now pass in this environment. The experimental WebRTC backend has a local SDP/ICE/data-channel test plus a generated VP8 frame through its sender transform, but no receiving decode/display, browser, audio playback, or input-to-photon test. See [`baseline.md`](baseline.md). No end-to-end latency claim is made.
