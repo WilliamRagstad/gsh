@@ -6,12 +6,14 @@ This directory contains comprehensive benchmarks and performance tests for the G
 
 The benchmark suite covers the following areas:
 
-- **Server Performance**: Async vs Simple server implementations under load
+- **Server Performance**: Server creation, hello messages, and frame generation
 - **Frame Processing**: Graphics data compression, segmentation, and throughput
 - **Authentication**: RSA operations, password hashing, and challenge-response
-- **Client-Server Communication**: Protocol performance and latency
-- **Concurrent Load**: Multiple client connections and resource usage
-- **Integration Tests**: End-to-end performance scenarios
+- **Client-Server Communication** (planned): Protocol performance and latency
+- **Concurrent Load** (planned): Multiple client connections and resource usage
+- **Integration Tests**: Service metadata, server setup, and frame-generation simulations
+
+The communication and concurrent-load files are unfinished placeholders, so they are not registered as runnable benchmarks. CI runs only the implemented suites.
 
 ## 🚀 Quick Start
 
@@ -41,7 +43,7 @@ cargo bench --bench integration_tests
 ### Quick Development Testing
 ```bash
 # Fast benchmarks for development (less accurate but faster)
-cargo bench -- --quick
+cargo bench -p gsh-benchmarks --bench '*' -- --quick
 ```
 
 ## 📊 Benchmark Categories
@@ -73,7 +75,7 @@ Evaluates security operation performance:
 **Key Metrics**: Key generation time, signature ops/sec, hash operations/sec
 
 ### 4. Integration Tests (`integration_tests.rs`)
-End-to-end performance scenarios:
+Service metadata, server setup, and frame-generation simulations:
 - Complete server lifecycle simulation
 - High-frequency frame generation
 - Multi-resolution server configuration

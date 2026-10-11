@@ -3,13 +3,11 @@ name = "gsh-benchmarks"
 version = "0.1.0"
 edition = "2021"
 publish = false
+# Register only implemented benchmarks; the other files are future placeholders.
+autobenches = false
 
 [[bench]]
 name = "server_performance"
-harness = false
-
-[[bench]]
-name = "client_server_communication"
 harness = false
 
 [[bench]]
@@ -18,10 +16,6 @@ harness = false
 
 [[bench]]
 name = "authentication"
-harness = false
-
-[[bench]]
-name = "concurrent_load"
 harness = false
 
 [[bench]]

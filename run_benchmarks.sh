@@ -57,13 +57,9 @@ if [ -d "benches" ]; then
     echo "  🔒 Authentication..."
     cargo bench --bench authentication --quiet || echo "    ⚠️  Authentication benchmarks had issues"
     
-    # Placeholder benchmarks (will be expanded later)
-    echo "  🌐 Client-Server Communication..."
-    cargo bench --bench client_server_communication --quiet || echo "    ⚠️  Communication benchmarks had issues"
-    
-    echo "  📈 Concurrent Load Testing..."
-    cargo bench --bench concurrent_load --quiet || echo "    ⚠️  Load testing benchmarks had issues"
-    
+    echo "  🧪 Integration Scenarios..."
+    cargo bench --bench integration_tests --quiet || echo "    ⚠️  Integration benchmarks had issues"
+
     cd - >/dev/null || exit 1
 fi
 
@@ -91,5 +87,5 @@ echo ""
 echo "💡 Tips:"
 echo "   • Open HTML reports in your browser to view detailed performance analysis"
 echo "   • Run 'cargo bench' in individual directories for focused testing"
-echo "   • Use 'cargo bench -- --quick' for faster runs during development"
+echo "   • Use cargo bench -p gsh-benchmarks --bench '*' -- --quick for faster runs during development"
 echo "   • Compare results over time to track performance regressions"
