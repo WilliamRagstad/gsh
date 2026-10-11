@@ -1144,6 +1144,29 @@ mod tests {
                     );
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
+
+                // A burst of independent keyframes can neither grow the native
+                // encoded FIFO past its admission window nor lose ownership on
+                // backpressure. These are all keyframes, so each is independently
+                // decodable if accepted.
+                for timestamp in 1..=16 {
+                    let frame = EncodedVideoFrame {
+                        data: VP8_KEYFRAME.to_vec(),
+                        codec: VideoCodec::Vp8,
+                        is_key_frame: true,
+                        width: 320,
+                        height: 240,
+                        rtp_timestamp: timestamp * 3_000,
+                    };
+                    match offerer.send_video(frame) {
+                        Ok(()) => {}
+                        Err(error) if matches!(error.error, SessionError::VideoBackpressure) => {
+                            assert!(error.frame.is_some(), "backpressure must return the frame");
+                        }
+                        Err(error) => panic!("unexpected video burst failure: {}", error.error),
+                    }
+                    assert!(offerer.video_frames_pending() <= MAX_VIDEO_FRAMES_IN_FLIGHT);
+                }
             }
             let wrong_codec = match offerer.negotiated_video_codec().unwrap() {
                 VideoCodec::H264 => VideoCodec::Vp8,
