@@ -27,7 +27,6 @@ const MAX_FPS: u32 = 60;
 const PIXEL_BYTES: usize = 4; // RGBA8
 const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 
-// Particle data structure for the simulation
 #[derive(Copy, Clone, Debug)]
 struct Particle {
     position: Vec2,
@@ -94,8 +93,6 @@ impl LiquidSimService {
             let radius = (i as f32 / count as f32) * (width.min(height) as f32 * 0.3);
             let pos = center + Vec2::new(angle.cos() * radius, angle.sin() * radius);
 
-            // Velocity pointing outward with some tangential component
-            // Smaller initial velocities so particles are calmer by default
             let vel = Vec2::new(
                 angle.cos() * 8.0 + angle.sin() * 3.0,
                 angle.sin() * 8.0 - angle.cos() * 3.0,
@@ -114,20 +111,15 @@ impl LiquidSimService {
         let width = self.width as f32;
         let height = self.height as f32;
 
-        // Update each particle in parallel using rayon
         self.particles.par_iter_mut().for_each(|particle| {
-            // Apply mild gravity (lower so particles don't constantly slide)
             let gravity = Vec2::new(0.0, 40.0);
             particle.velocity += gravity * dt;
 
-            // Apply stronger damping so particles settle to rest quickly
             let damping = 0.90f32.powf(dt * 60.0);
             particle.velocity *= damping;
 
-            // Update position
             particle.position += particle.velocity * dt;
 
-            // Bounce off walls
             let margin = 5.0;
             if particle.position.x < margin {
                 particle.position.x = margin;
@@ -147,12 +139,8 @@ impl LiquidSimService {
             }
         });
 
-        // Compute inter-particle forces
-        // Note: This is O(n²) which is intentionally simple for demonstration.
-        // For production with more particles, use spatial partitioning (grid/quadtree)
-        // or limit interaction distance more aggressively.
+        // O(n²) for simplicity; larger simulations need spatial partitioning.
         let particles_clone = self.particles.clone();
-        // Make interactions weaker and shorter range so system is calmer
         let influence_radius = 12.0;
         let repulsion_strength = 1200.0;
 
@@ -181,25 +169,16 @@ impl LiquidSimService {
                 particle.velocity += force * dt;
             });
 
-        // Apply mouse interaction forces based on the position delta between
-        // mouse samples. This is more robust than a strict speed threshold.
+        // Use pointer displacement rather than a strict speed threshold.
         if let (Some(mouse_pos), Some(prev_mouse_pos)) = (self.mouse_pos, self.prev_mouse_pos) {
             let mouse_delta = mouse_pos - prev_mouse_pos;
             let delta_len = mouse_delta.length();
             let mouse_influence_radius = 80.0;
             let mouse_strength = 12000.0;
 
-            // If the pointer moved at least a little, apply forces.
             if delta_len > 0.1 {
-                // Derive a velocity-like vector using frame dt so effect scales sensibly
                 let mouse_velocity = mouse_delta / dt.max(0.001);
-                // log::trace!(
-                //     "Mouse delta: {:.2}, velocity: {:.2}",
-                //     delta_len,
-                //     mouse_velocity.length()
-                // );
 
-                // Scale influence by how large the movement was
                 let mv = mouse_velocity * 0.6;
                 let strength_scale = (delta_len / 30.0).clamp(0.2, 2.0);
 
@@ -210,10 +189,8 @@ impl LiquidSimService {
                     if dist_sq < mouse_influence_radius * mouse_influence_radius {
                         let dist = dist_sq.sqrt();
                         if dist > 0.1 {
-                            // Add velocity based on mouse movement
                             particle.velocity += mv;
 
-                            // Add a push force away from mouse cursor (weaker with distance)
                             let dir = diff / dist;
                             let push_force = mouse_strength * strength_scale / (dist_sq + 400.0);
                             particle.velocity += dir * push_force * dt;
@@ -223,7 +200,6 @@ impl LiquidSimService {
             }
         }
 
-        // If particles are very slow, zero them out so they appear to stop
         self.particles.par_iter_mut().for_each(|particle| {
             if particle.velocity.length_squared() < 0.5 {
                 particle.velocity = Vec2::ZERO;
@@ -232,24 +208,20 @@ impl LiquidSimService {
     }
 
     fn render_particles(&self) -> Vec<u8> {
-        // We'll accumulate into float RGBA channels for smooth/soft particles
         let w = self.width;
         let h = self.height;
         let mut accum: Vec<[f32; 4]> = vec![[5.0 / 255.0, 5.0 / 255.0, 12.0 / 255.0, 0.0]; w * h];
 
-        // Render each particle as a soft circle with falloff
         for particle in &self.particles {
             let cx = particle.position.x;
             let cy = particle.position.y;
 
-            // Color based on velocity (cooler when slow, brighter when fast)
             let speed = particle.velocity.length();
             let normalized_speed = (speed / 200.0).clamp(0.0, 1.0);
             let pr = (0.2 + normalized_speed * 0.8) as f32;
             let pg = (0.4 + normalized_speed * 0.6) as f32;
             let pb = (0.8 + normalized_speed * 0.2) as f32;
 
-            // Particle visual radius
             let radius = 6.0 + normalized_speed * 6.0;
             let r_sq = radius * radius;
 
@@ -265,32 +237,27 @@ impl LiquidSimService {
                     let dist_sq = dx * dx + dy * dy;
                     if dist_sq <= r_sq {
                         let dist = dist_sq.sqrt();
-                        // Smooth falloff: gaussian-like (exp) or simple linear
                         let t = 1.0 - (dist / radius);
-                        let alpha = (t * t * 0.9).max(0.0); // emphasize center
+                        let alpha = (t * t * 0.9).max(0.0);
 
                         let idx = py * w + px;
                         accum[idx][0] += pr * alpha;
                         accum[idx][1] += pg * alpha;
                         accum[idx][2] += pb * alpha;
-                        // We accumulate alpha too for blending decisions
                         accum[idx][3] = (accum[idx][3] + alpha).min(10.0);
                     }
                 }
             }
         }
 
-        // Convert accum buffer to RGBA8
         let mut rgba_data = Vec::with_capacity(w * h * PIXEL_BYTES);
         for px in 0..(w * h) {
-            // approximate final alpha
             let ar = accum[px][3].clamp(0.0, 1.0);
             let r = (accum[px][0] * 255.0).min(255.0) as u8;
             let g = (accum[px][1] * 255.0).min(255.0) as u8;
             let b = (accum[px][2] * 255.0).min(255.0) as u8;
             let a = (ar * 255.0).min(255.0) as u8;
 
-            // If alpha is tiny, keep solid background tone
             if a == 0 {
                 rgba_data.extend_from_slice(&[5u8, 5u8, 12u8, 255u8]);
             } else {
@@ -302,21 +269,17 @@ impl LiquidSimService {
     }
 
     fn simulate_and_render(&mut self) -> Vec<u8> {
-        // Update delta time
         let dt = self.last_update.elapsed().as_secs_f32();
         self.last_update = Instant::now();
 
-        // Update particle physics
         self.update_particles(dt);
 
-        // Render to RGBA buffer
         self.render_particles()
     }
 
     async fn send_frame(&mut self, stream: &mut ServerStream) -> Result<()> {
         let rgba_data = self.simulate_and_render();
 
-        // Compress the data with Zstd
         use std::io::Write;
         // Reuse the compression buffer across frames to reduce allocations.
         let mut out_buf = std::mem::take(&mut self.compress_buf);
@@ -326,7 +289,6 @@ impl LiquidSimService {
         let compressed = encoder.finish()?;
         let compressed_len = compressed.len();
         let uncompressed_len = rgba_data.len();
-        // Save compressed buffer for reuse (its capacity will be reused next frame).
         self.compress_buf = compressed;
 
         log::debug!(
@@ -347,7 +309,7 @@ impl LiquidSimService {
             })
             .await?;
 
-        // Flush once per-frame so we don't flush per-message.
+        // Batch all frame messages before flushing.
         stream.flush().await?;
 
         Ok(())
@@ -356,7 +318,6 @@ impl LiquidSimService {
     fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
-        // Reinitialize particles for new dimensions
         self.particles = Self::init_particles(self.particles.len(), width, height);
     }
 }
@@ -405,18 +366,15 @@ impl GshServiceExt for LiquidSimService {
 
     async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = &event {
-            // Handle mouse events
             if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
                 match MouseAction::try_from(mouse_event.action).unwrap() {
                     MouseAction::Move if input.window_id == WINDOW_ID => {
-                        // Update mouse position tracking
                         self.prev_mouse_pos = self.mouse_pos;
                         self.mouse_pos =
                             Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
                         log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
                     }
                     MouseAction::Exit => {
-                        // Mouse exited the window
                         self.prev_mouse_pos = self.mouse_pos;
                         self.mouse_pos = None;
                         log::trace!("Mouse exited window {}", input.window_id);
@@ -427,7 +385,6 @@ impl GshServiceExt for LiquidSimService {
                 }
             }
 
-            // Handle window events
             if let Some(InputEvent::WindowEvent(window_event)) = input.input_event.as_ref() {
                 match WindowAction::try_from(window_event.action).unwrap() {
                     WindowAction::Resize => {

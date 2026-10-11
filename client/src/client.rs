@@ -27,15 +27,11 @@ use std::{
 };
 
 const MAX_FPS: u32 = 60;
-const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64; // in nanoseconds
+const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64;
 pub type WindowID = u32;
 
 pub struct SdlWindow {
-    // pub server_window_id: WindowID,
-    // pub texture_creator: sdl3::render::TextureCreator<video::WindowContext>,
-    // pub current_texture: sdl3::render::Texture<'static>,
     pub canvas: Canvas<video::Window>,
-    // pub current_frame: Option<Frame>,
 }
 
 pub struct Client {
@@ -78,7 +74,6 @@ impl Client {
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
         let mut window = self.video.window(&ws.title, ws.width, ws.height);
         if let Some(monitor_id) = ws.monitor_id {
-            // SDL3 exposes displays() which returns a Vec<Display>; use it to get bounds
             if let Ok(displays) = self.video.displays() {
                 if let Some(display) = displays.get(monitor_id as usize) {
                     if let Ok(bounds) = display.get_bounds() {
@@ -103,7 +98,6 @@ impl Client {
         }
         let window = window.build().map_err(|e| anyhow!(e))?;
         let sdl_window_id = window.id();
-        // SDL3's into_canvas API returns a Canvas directly
         let mut canvas = window.into_canvas();
         self.server_window_to_sdl_window
             .insert(ws.window_id, sdl_window_id);
@@ -113,7 +107,6 @@ impl Client {
         canvas.clear();
         canvas.present();
         let sdl_window = SdlWindow {
-            // server_window_id: ws.window_id,
             canvas,
         };
         self.windows.insert(sdl_window_id, sdl_window);
@@ -123,9 +116,7 @@ impl Client {
     async fn destroy_window(&mut self, window_id: WindowID) -> Result<()> {
         if let Some(mut win) = self.windows.remove(&window_id) {
             win.canvas.window_mut().hide();
-            // Translate SDL window id to server window id if possible
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
-                // Remove reverse mapping
                 self.server_window_to_sdl_window.remove(&server_window_id);
                 self.stream
                     .send(protocol::UserInput {
@@ -307,8 +298,6 @@ impl Client {
                 window_id,
                 ..
             } => {
-                // SDL3's WindowEvent variants may differ; handle common ones and
-                // fall back to checking the debug string for Close-type events.
                 if win_event == WindowEvent::CloseRequested {
                     self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
                         .await?;
@@ -330,12 +319,10 @@ impl Client {
                         .await?;
                     log::trace!("Window {} moved to ({}, {})", window_id, x, y);
                 } else if win_event == WindowEvent::MouseEnter {
-                    // Mouse entered the window (fallback via debug string)
                     self.mouse_event(window_id, MouseAction::Enter, None, 0, 0, 0.0, 0.0)
                         .await?;
                     log::trace!("Mouse entered window {}", window_id);
                 } else if win_event == WindowEvent::MouseLeave {
-                    // Mouse left the window (fallback via debug string)
                     self.mouse_event(window_id, MouseAction::Exit, None, 0, 0, 0.0, 0.0)
                         .await?;
                     log::trace!("Mouse left window {}", window_id);
@@ -425,7 +412,7 @@ impl Client {
             Event::MouseWheel {
                 window_id, x, y, ..
             } => {
-                // SDL3 MouseWheel fields differ; use x/y as deltas. Position may not be available.
+                // SDL wheel events do not provide pointer coordinates.
                 self.mouse_event(
                     window_id,
                     MouseAction::Scroll,
@@ -454,7 +441,6 @@ impl Client {
         let mut event_pump = self.sdl.event_pump().map_err(|e| anyhow!(e))?;
         let mut last_frame_time = Instant::now();
         'running: loop {
-            // Read messages from the server
             match self.stream.receive().await {
                 Ok(event) => {
                     if !self.handle_server_event(event).await? {
@@ -462,7 +448,7 @@ impl Client {
                     }
                 }
                 Err(err) => match err.kind() {
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => (), // No data available yet, do nothing
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => (),
                     std::io::ErrorKind::UnexpectedEof
                     | std::io::ErrorKind::ConnectionAborted
                     | std::io::ErrorKind::ConnectionRefused
@@ -478,14 +464,12 @@ impl Client {
                 },
             };
 
-            // Events from SDL windows
             for event in event_pump.poll_iter() {
                 if !self.handle_window_event(event).await? {
                     break 'running;
                 }
             }
 
-            // Sleep to maintain frame rate
             let elapsed_time = last_frame_time.elapsed().as_nanos() as u64;
             if elapsed_time < FRAME_TIME {
                 tokio::time::sleep(Duration::from_nanos(FRAME_TIME - elapsed_time)).await;
@@ -556,7 +540,7 @@ impl Client {
     fn render_frame(&mut self, frame: Frame) -> Result<bool> {
         if frame.segments.is_empty() || frame.width == 0 || frame.height == 0 {
             log::warn!("Received empty frame, skipping rendering.");
-            return Ok(true); // Keep going
+            return Ok(true);
         }
         log::debug!(
             "Received frame of size {}x{} and {} segments",
@@ -582,7 +566,6 @@ impl Client {
             // Clear the canvas first so previous frames don't persist beneath the new one.
             win.canvas.set_draw_color(Color::BLACK);
             win.canvas.clear();
-            // Apply all segments of the frame to the window
             for segment in &frame.segments {
                 if segment.width == 0 || segment.height == 0 {
                     log::warn!("Received empty segment, skipping rendering.");
@@ -625,6 +608,6 @@ impl Client {
                 server_window_id
             );
         }
-        Ok(true) // Keep going
+        Ok(true)
     }
 }

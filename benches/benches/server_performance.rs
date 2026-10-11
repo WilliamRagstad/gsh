@@ -39,7 +39,6 @@ fn bench_server_startup_performance(c: &mut Criterion) {
                     let server = BenchmarkServer::new(dimension, dimension);
                     let async_server = server.create_async_server(config);
 
-                    // Time server creation (but don't actually serve to avoid port conflicts)
                     black_box(async_server)
                 })
             },
@@ -63,7 +62,6 @@ fn bench_frame_generation(c: &mut Criterion) {
             &(width, height),
             |b, &(w, h)| {
                 b.iter(|| {
-                    // Simulate gradient frame generation like in benchmark server
                     let mut frame_data = vec![0u8; w * h * 4]; // RGBA
                     for y in 0..h {
                         for x in 0..w {

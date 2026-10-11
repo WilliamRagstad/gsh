@@ -1,9 +1,4 @@
 #!/bin/bash
-#
-# Benchmark Runner Script for GSH Performance Testing
-# 
-# This script runs all benchmarks and generates HTML reports for analysis
-#
 
 set -e
 
@@ -13,13 +8,11 @@ cd "$SCRIPT_DIR"
 echo "🚀 Starting GSH Performance Benchmark Suite..."
 echo "============================================="
 
-# Check if criterion HTML feature is available
 if ! cargo --list | grep -q "bench"; then
     echo "❌ Cargo bench command not found. Please install Rust with benchmark support."
     exit 1
 fi
 
-# Function to run benchmarks with proper error handling
 run_benchmark() {
     local dir="$1"
     local name="$2"
@@ -36,18 +29,15 @@ run_benchmark() {
     cd - >/dev/null || exit 1
 }
 
-# Run libgsh internal benchmarks
 if [ -d "libgsh" ]; then
     run_benchmark "libgsh" "LibGSH Internal"
 fi
 
-# Run comprehensive benchmark suite
 if [ -d "benches" ]; then
     echo ""
     echo "📊 Running comprehensive benchmark suite..."
     cd benches || exit 1
     
-    # Individual benchmark categories
     echo "  🖥️  Server Performance..."
     cargo bench --bench server_performance --quiet || echo "    ⚠️  Server performance benchmarks had issues"
     
@@ -67,12 +57,10 @@ echo ""
 echo "📈 Benchmark Results Summary"
 echo "============================"
 
-# Find and display benchmark result locations
 if find . -name "criterion" -type d 2>/dev/null | head -1 >/dev/null; then
     echo "📁 Benchmark results saved to:"
     find . -name "criterion" -type d | while read -r dir; do
         echo "   📊 $(realpath "$dir")"
-        # Look for HTML reports
         if find "$dir" -name "index.html" 2>/dev/null | head -1 >/dev/null; then
             echo "      🌐 HTML report: $(find "$dir" -name "index.html" | head -1)"
         fi

@@ -93,7 +93,6 @@ async fn verify_host(
             host
         );
         println!("Host {} fingerprints: {:X?}", host, fingerprints);
-        // Prompt for confirmation
         let confirmation = Confirm::new()
             .with_prompt("Do you want to add this host to known hosts?")
             .default(false)
@@ -187,7 +186,6 @@ impl ServerCertVerifier for NoCertificateVerification {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        // Always return a valid certificate verification result
         Ok(ServerCertVerified::assertion())
     }
 }

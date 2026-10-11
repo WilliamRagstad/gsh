@@ -14,9 +14,7 @@ use rsa::pkcs1v15::Signature;
 use rsa::signature::SignatureEncoding;
 use rsa::{pkcs1::EncodeRsaPublicKey, RsaPublicKey};
 
-/// Handshake function for the **client side**.
-/// It sends a `ClientHello` message and waits for a `ServerHelloAck` response.
-/// If the server version is not compatible, it sends a `StatusUpdate` message and returns an error.
+/// Negotiates protocol settings and optional authentication; rejects incompatible versions.
 pub async fn handshake<A>(
     stream: &mut ClientStream,
     monitors: Vec<MonitorInfo>,
@@ -49,7 +47,6 @@ where
         ));
     };
 
-    // Send ClientAuth message if auth_method is set
     if let Some(AuthMethod::Password(_)) = server_hello.auth_method {
         stream
             .send(protocol::ClientAuth {
@@ -58,7 +55,6 @@ where
                 })),
             })
             .await?;
-        // Wait for ServerAuthAck message
         let ServerEvent::ServerAuthAck(server_auth_ack) = stream.receive().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ServerAuthAck message".into(),
@@ -85,7 +81,6 @@ where
                 })),
             })
             .await?;
-        // Wait for ServerAuthAck message
         let ServerEvent::ServerAuthAck(server_auth_ack) = stream.receive().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ServerAuthAck message".into(),

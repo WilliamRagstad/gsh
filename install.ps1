@@ -1,9 +1,6 @@
 <#
 .SYNOPSIS
 !    Install the latest Client binary for Windows
-!    1. Detects system architecture before downloading the correct version.
-!    2. Downloads the latest gsh binary from GitHub.
-!    3. Adds it to the PATH variable.
 !
 ! Copyright (c) 2023 William Ragstad
 ! Licensed under the MIT License.
@@ -19,7 +16,7 @@ else { $arch = "x86" }
 
 $release_api = "https://api.github.com/repos/WilliamRagstad/gsh/releases/latest"
 $release = Invoke-RestMethod -Uri $release_api -Headers @{ "User-Agent" = "gsh-installer" }
-$version = $release.tag_name.TrimStart("v")   # e.g. 4.14.1
+$version = $release.tag_name.TrimStart("v")
 $asset = $release.assets | Where-Object {
 	$_.name -like "*$version*" -and
 	$_.name -like "*$arch*" -and

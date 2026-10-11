@@ -12,11 +12,8 @@ const LENGTH_SIZE: usize = std::mem::size_of::<LengthType>();
 /// A codec for reading and writing length-value encoded messages.
 #[derive(Debug)]
 pub struct GshCodec<S: AsyncRead + AsyncWrite + Send + Unpin> {
-    /// The underlying reader and writer stream.
     stream: S,
-    /// The buffer to store the read data.
     buf: Vec<u8>,
-    /// The length of the message to be read.
     length: usize,
     partial_read: bool,
 }
@@ -35,10 +32,9 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> GshCodec<S> {
         &mut self.stream
     }
 
-    /// Reads a whole length-value encoded message from the underlying reader.
-    /// Returns the message bytes as a `Vec<u8>`.
+    /// Reads a complete length-value encoded message.
     pub(crate) async fn read_internal(&mut self) -> std::io::Result<prost::bytes::Bytes> {
-        let read_timeout = Duration::from_millis(10); // Set a 10-second timeout
+        let read_timeout = Duration::from_millis(10);
 
         if !self.partial_read {
             let mut length_buf = [0; LENGTH_SIZE];
@@ -48,13 +44,10 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> GshCodec<S> {
         }
         self.partial_read = true;
         timeout(read_timeout, self.stream.read_exact(&mut self.buf)).await??;
-        // Convert the Vec<u8> to Bytes for better performance
-        // and to avoid unnecessary allocations.
         let bytes = prost::bytes::Bytes::from(std::mem::replace(
             &mut self.buf,
             Vec::with_capacity(self.length),
         ));
-        // If we managed to get here, no exception was thrown and we have a complete message.
         self.partial_read = false;
         Ok(bytes)
     }
@@ -63,15 +56,14 @@ impl<S: AsyncRead + AsyncWrite + Send + Unpin> GshCodec<S> {
     #[inline]
     pub(crate) async fn write_internal<T: Message>(&mut self, message: T) -> std::io::Result<()> {
         let message: Vec<u8> = message.encode_to_vec();
-        let mut buf: Vec<u8> = Vec::new(); // with_capacity(LENGTH_SIZE + message.len());
+        let mut buf: Vec<u8> = Vec::new();
         let length = message.len() as LengthType;
         let length_buf = length.to_be_bytes();
         assert_eq!(length_buf.len(), LENGTH_SIZE);
         buf.extend_from_slice(&length_buf);
         buf.extend_from_slice(&message);
         self.stream.write_all(&buf).await?;
-        // NOTE: do not flush on every message — callers should flush once per batch/frame
-        // to avoid syscall overhead and reduce p99 latency.
+        // Callers flush once per batch/frame to avoid per-message syscall overhead.
         Ok(())
     }
 

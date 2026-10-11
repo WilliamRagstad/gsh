@@ -44,7 +44,6 @@ fn bench_frame_compression(c: &mut Criterion) {
                 },
             );
 
-            // Also benchmark decompression
             let compressed = zstd::encode_all(&frame_data[..], 1).unwrap();
             group.bench_with_input(
                 BenchmarkId::new(format!("zstd_decompress_{}_{}", resolution, pattern), size),
@@ -93,7 +92,6 @@ fn bench_frame_processing_pipeline(c: &mut Criterion) {
 
     group.bench_function("complete_pipeline", |b| {
         b.iter(|| {
-            // Simulate complete frame processing: create frame -> segment -> compress
             let segments = full_frame_segment(black_box(&frame_data), 1920, 1080);
             let compressed = zstd::encode_all(&segments[0].data[..], 1).unwrap();
             black_box(compressed)

@@ -51,7 +51,6 @@ pub struct CubeService {
     start: Instant,
     width: usize,
     height: usize,
-    // prev_frame: Vec<u8>,
 }
 
 impl Default for CubeService {
@@ -60,7 +59,6 @@ impl Default for CubeService {
             start: Instant::now(),
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
-            // prev_frame: vec![0; INITIAL_WIDTH * INITIAL_HEIGHT * PIXEL_BYTES],
         }
     }
 }
@@ -83,7 +81,6 @@ impl CubeService {
     fn draw_cube(&self, stroke_width: usize) -> Vec<u8> {
         let mut frame = vec![0u8; self.width * self.height * PIXEL_BYTES];
 
-        // Define cube vertices
         let size = 0.4;
         let vertices = [
             Vec3::new(-size, -size, -size),
@@ -111,18 +108,16 @@ impl CubeService {
             (3, 7),
         ];
 
-        // Rotation based on time
         let angle: f32 = self.start.elapsed().as_secs_f32();
         let rot_x: Mat4<f32> = Mat4::rotation_x(angle);
         let rot_y: Mat4<f32> = Mat4::rotation_y(angle * 0.7);
         let model: Mat4<f32> = rot_y * rot_x;
 
-        // Project vertices
         let projected: Vec<(i32, i32)> = vertices
             .iter()
             .map(|v| {
-                let v4 = Vec4::new(v.x, v.y, v.z, 1.0); // Convert Vec3 to Vec4 with w = 1.0
-                let transformed = model * v4; // Multiply matrix with vector
+                let v4 = Vec4::new(v.x, v.y, v.z, 1.0);
+                let transformed = model * v4;
                 let perspective = 1.5 / (transformed.z + 2.5);
                 let x = ((transformed.x * perspective + 0.5) * self.width as f32) as i32;
                 let y = ((-transformed.y * perspective + 0.5) * self.height as f32) as i32;
@@ -130,7 +125,6 @@ impl CubeService {
             })
             .collect();
 
-        // Draw edges
         for (a, b) in edges {
             Self::draw_line(
                 projected[a],

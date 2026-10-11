@@ -1,11 +1,4 @@
-//! # Lib Graphical Shell (libgsh)
-//!
-//! This library provides a framework for creating graphical shell applications using Rust.
-//! It includes support for both synchronous and asynchronous services, as well as TLS support using Rustls.
-//! It also provides a simple server implementation for handling client connections and managing the application service.
-
-// #[cfg(all(feature = "client", feature = "server"))]
-// compile_error!("Features 'client' and 'server' cannot be enabled at the same time.");
+//! Graphical services over TLS, with a Tokio server and client protocol support.
 
 pub use async_trait;
 pub use rcgen;

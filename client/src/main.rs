@@ -86,7 +86,6 @@ enum HostCommand {
 async fn main() {
     let color_choice = color_choice();
 
-    // Show info logs by default so input events are visible during interactive use
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .write_style(match color_choice {
             ColorChoice::Always => WriteStyle::Always,
@@ -97,7 +96,6 @@ async fn main() {
         .format_timestamp(None)
         .init();
 
-    // Force colored help/errors by default (unless NO_COLOR / TERM=dumb).
     let mut cmd = Args::command();
     cmd = cmd.color(color_choice);
     cmd = cmd.styles(clap_styles());
@@ -173,7 +171,6 @@ async fn main() {
         return;
     }
 
-    // Initialize SDL3
     let sdl = sdl3::init().unwrap_or_else(|e| {
         log::error!("Failed to initialize SDL3: {}", e);
         exit(1);
@@ -277,7 +274,6 @@ fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
     if let Ok(displays) = video.displays() {
         for (i, display) in displays.iter().enumerate() {
-            // display.bounds() and display.desktop_mode() are SDL3 APIs exposed by the crate
             if let Ok(bounds) = display.get_bounds() {
                 if let Ok(mode) = display.get_mode() {
                     monitors.push(MonitorInfo {

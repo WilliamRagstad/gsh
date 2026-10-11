@@ -8,7 +8,7 @@ use tokio_rustls::client::TlsStream;
 mod handshake;
 pub use handshake::handshake;
 
-/// Asynchronous message codec for the client `TlsStream` over a `TcpStream`.\
+/// Asynchronous message codec for the client `TlsStream` over a `TcpStream`.
 pub type ClientStream = GshCodec<TlsStream<TcpStream>>;
 
 impl ClientStream {

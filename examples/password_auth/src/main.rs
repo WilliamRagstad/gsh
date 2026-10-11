@@ -55,7 +55,6 @@ impl GshService for AuthService {
     }
 
     async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
-        // Proxy to the default implementation provided by the extension trait.
         <Self as GshServiceExt>::main(self, stream).await
     }
 }

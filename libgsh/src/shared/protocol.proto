@@ -3,9 +3,6 @@ package protocol;
 
 import "google/protobuf/empty.proto";
 
-
-// Wrapper message for all post-authentication client messages
-// Client -> Server
 message ClientMessage {
 	oneof client_event {
 		ClientHello client_hello = 1;
@@ -15,8 +12,6 @@ message ClientMessage {
 	}
 }
 
-// Wrapper message for all post-authentication server messages
-// Server -> Client
 message ServerMessage {
 	oneof server_event {
 		ServerHelloAck server_hello_ack = 1;
@@ -26,8 +21,6 @@ message ServerMessage {
 	}
 }
 
-// Initial connection message from the client to the server
-// Client -> Server
 message ClientHello {
 	enum OS {
 		UNKNOWN = 0;
@@ -44,30 +37,26 @@ message ClientHello {
 		int32  y            = 3;
 		uint32 width        = 4;
 		uint32 height       = 5;
-		uint32 refresh_hz   = 6;
+		uint32 refresh_hz   = 6; // Hertz
 	}
 	uint32 protocol_version = 1;
-	OS os = 2;           // Operating system of the client
-	string os_version = 3; // Version of the operating system
-	repeated MonitorInfo monitors = 4; // List of monitor information
+	OS os = 2;
+	string os_version = 3;
+	repeated MonitorInfo monitors = 4;
 }
 
-// Acknowledgment message from the server to the client
-// Server -> Client
 message ServerHelloAck {
-	// Frame format enum, used to specify the format of the image data
 	enum FrameFormat {
 		RGB = 0;
 		RGBA = 1;
 	}
 	FrameFormat format = 1;
 	oneof compression {
-		ZstdCompression zstd = 2; // Zstandard compression
+		ZstdCompression zstd = 2;
 	}
 	message ZstdCompression {
-		int32 level = 1; // Compression level (0-22)
+		int32 level = 1;
 	}
-	// Window settings message, used to configure the window properties for the client.
 	message WindowSettings {
 		enum WindowMode {
 			FULLSCREEN = 0;
@@ -75,38 +64,32 @@ message ServerHelloAck {
 			WINDOWED = 2;
 			WINDOWED_MAXIMIZED = 3;
 		}
-		uint32 window_id = 1;       // Unique identifier for the window
-		optional uint32 monitor_id = 2; // Monitor ID for the window
-		WindowMode initial_mode = 3; // Window mode (fullscreen, windowed, borderless)
-		uint32 width = 4;    // Width of the window in pixels
-		uint32 height = 5;   // Height of the window in pixels
-		string title = 6;    // Title of the window
-		bool always_on_top = 7; // Whether the window is always on top
-		bool allow_resize = 8; // Whether the window can be resized
-		// If allow_resize = true, this flag determines
-		// whether frame images should be resized to fit the window
-		// when the window is resized or stay fixed to the original frame size.
+		uint32 window_id = 1;
+		optional uint32 monitor_id = 2;
+		WindowMode initial_mode = 3;
+		uint32 width = 4;
+		uint32 height = 5;
+		string title = 6;
+		bool always_on_top = 7;
+		bool allow_resize = 8;
+		// Scale frames to fit a resized window when allow_resize is enabled.
 		bool resize_frame = 9;
-		// Determines how the frame image is anchored in the window
 		enum WindowAnchor {
 			TOP_LEFT = 0;
 			CENTER = 1;
 		}
-		WindowAnchor frame_anchor = 10; // Anchor position of the frame image in the window
+		WindowAnchor frame_anchor = 10;
 	}
-	// List of initial window settings for the client
 	repeated WindowSettings windows = 3;
 	oneof auth_method {
-		google.protobuf.Empty password = 4; // Password-based authentication
-		SignatureMethod signature = 5; // Signature-based authentication
+		google.protobuf.Empty password = 4;
+		SignatureMethod signature = 5;
 	}
 	message SignatureMethod {
-		bytes sign_message = 1; // Message to be signed for authentication
+		bytes sign_message = 1; // Authentication challenge to sign
 	}
 }
 
-// Message representing client authentication data
-// Client -> Server
 message ClientAuth {
 	oneof auth_data {
 		Password password = 1;
@@ -121,20 +104,15 @@ message ClientAuth {
 	}
 }
 
-// Message representing server authentication data
-// Server -> Client
 message ServerAuthAck {
 	enum AuthStatus {
 		SUCCESS = 0;
 		FAILURE = 1;
 	}
-	AuthStatus status = 1; // Authentication status (success or failure)
-	string message = 2;   // Message providing additional information about the authentication status
+	AuthStatus status = 1;
+	string message = 2;
 }
 
-// Message representing status updates
-// Server -> Client
-// Client -> Server
 message StatusUpdate {
 	enum StatusType {
 		INFO = 0;
@@ -142,84 +120,68 @@ message StatusUpdate {
 		ERROR = 2;
 		EXIT = 3;
 	}
-	StatusType kind = 1; // Type of status update
+	StatusType kind = 1;
 	oneof details {
 		Info info = 2;
 		Warning warning = 3;
 		Error error = 4;
 	}
-
-	// Nested message for informational updates
 	message Info {
-		string message = 1; // Informational message
+		string message = 1;
 	}
-
-	// Nested message for warning updates
 	message Warning {
-		string message = 1; // Warning message
-		int32 code = 2;     // Warning code
+		string message = 1;
+		int32 code = 2;
 	}
-
-	// Nested message for error updates
 	message Error {
-		string message = 1; // Error message
-		int32 code = 2;     // Error code
+		string message = 1;
+		int32 code = 2;
 	}
 }
 
-// Message representing user input events
-// Client -> Server
 message UserInput {
 	enum InputType {
 		KEY_EVENT = 0;
 		MOUSE_EVENT = 1;
 		WINDOW_EVENT = 2;
 	}
-	InputType kind = 1;   // Type of input event
-	uint32 window_id = 2; // Unique identifier for the window
-
-	// Oneof field to handle different types of input events
+	InputType kind = 1;
+	uint32 window_id = 2;
 	oneof input_event {
-		KeyEvent key_event = 3; // Keyboard event
-		MouseEvent mouse_event = 4; // Mouse event
-		WindowEvent window_event = 5; // Window event
+		KeyEvent key_event = 3;
+		MouseEvent mouse_event = 4;
+		WindowEvent window_event = 5;
 	}
-
-	// Nested message for keyboard events
 	message KeyEvent {
 		enum KeyAction {
 			PRESS = 0;
 			RELEASE = 1;
 		}
-		KeyAction action = 1; // Action (press or release)
-		int32 key_code = 2;  // Key code (e.g., ASCII value)
-		uint32 modifiers = 3; // Modifier keys (e.g., Shift, Ctrl, Alt)
+		KeyAction action = 1;
+		int32 key_code = 2;
+		uint32 modifiers = 3;
 	}
-
-	// Nested message for mouse events
 	message MouseEvent {
 		enum MouseAction {
 			MOVE = 0;
 			PRESS = 1;
 			RELEASE = 2;
 			SCROLL = 3;
-			ENTER = 4; // Mouse entered the window
-			EXIT = 5;  // Mouse left/exited the window
+			ENTER = 4;
+			EXIT = 5;
 		}
-		MouseAction action = 1; // Action (move, click, scroll)
+		MouseAction action = 1;
 		enum MouseButton {
 			LEFT = 0;
 			RIGHT = 1;
 			MIDDLE = 2;
 		}
-		int32 button = 2; // Mouse button (e.g., left, right, middle)
-		int32 x = 3;     // X coordinate of the mouse event
-		int32 y = 4;     // Y coordinate of the mouse event
-		float delta_x = 5; // Scroll delta (for scroll events)
-		float delta_y = 6; // Scroll delta (for scroll events)
+		int32 button = 2;
+		int32 x = 3;
+		int32 y = 4;
+		float delta_x = 5; // Scroll deltas
+		float delta_y = 6;
 	}
-
-	// Nested message for window events
 	message WindowEvent {
 		enum WindowAction {
 			RESIZE = 0;
@@ -232,28 +194,24 @@ message UserInput {
 			FOCUS = 7;
 			UNFOCUS = 8;
 		}
-		WindowAction action = 1; // Action (resize, move, close, etc.)
-		int32 x = 2;            // X coordinate of the window
-		int32 y = 3;            // Y coordinate of the window
-		uint32 width = 4;       // Width of the window in pixels
-		uint32 height = 5;      // Height of the window in pixels
+		WindowAction action = 1;
+		int32 x = 2;
+		int32 y = 3;
+		uint32 width = 4;
+		uint32 height = 5;
 	}
 }
 
-// Message representing a frame of image data
-// Server -> Client
 message Frame {
-	uint32 window_id = 1; // Unique identifier for the window
-	uint32 width = 2;     // Width of the image in pixels
-	uint32 height = 3;    // Height of the image in pixels
-
-	// Partial frame segments
+	uint32 window_id = 1;
+	uint32 width = 2;
+	uint32 height = 3;
 	message Segment {
-		int32 x = 1;        // X coordinate of the top-left corner of the segment
-		int32 y = 2;        // Y coordinate of the top-left corner of the segment
-		uint32 width = 3;    // Width of the segment in pixels
-		uint32 height = 4;   // Height of the segment in pixels
-		bytes data = 5;      // Raw image data in bytes
+		int32 x = 1;
+		int32 y = 2;
+		uint32 width = 3;
+		uint32 height = 4;
+		bytes data = 5; // Pixel bytes, compressed if negotiated
 	}
-	repeated Segment segments = 4; // List of segments in the frame
+	repeated Segment segments = 4;
 }

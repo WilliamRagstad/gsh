@@ -22,10 +22,10 @@ fn gsh_dir() -> PathBuf {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHost {
-    pub host: String,                // Hostname or IP address
+    pub host: String,
     pub fingerprints: Vec<Vec<u8>>,  // Fingerprint of the host's public key
-    pub id_file_ref: Option<String>, // Reference to an ID file in IdFiles
-    pub password: Option<String>,    // Password for the host (if any)
+    pub id_file_ref: Option<String>,
+    pub password: Option<String>,
 }
 
 impl KnownHost {
@@ -48,7 +48,7 @@ impl KnownHost {
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownHosts {
-    pub hosts: Vec<KnownHost>, // List of known hosts
+    pub hosts: Vec<KnownHost>,
 }
 
 impl KnownHosts {
@@ -59,7 +59,6 @@ impl KnownHosts {
             std::fs::create_dir_all(gsh_dir()).expect("Failed to create .gsh directory");
             std::fs::File::create(&path).expect("Failed to create known_hosts.json file");
         }
-        // Load the file and parse it into a KnownHosts struct
         let file = std::fs::File::open(&path).expect("Failed to open known_hosts.json file");
         let reader = std::io::BufReader::new(file);
         serde_json::from_reader(reader).unwrap_or_else(|_| KnownHosts::default())
@@ -103,7 +102,7 @@ impl KnownHosts {
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct IdFiles {
-    id_files: HashMap<String, PathBuf>, // List of ID files
+    id_files: HashMap<String, PathBuf>,
 }
 
 impl IdFiles {
@@ -114,7 +113,6 @@ impl IdFiles {
             std::fs::create_dir_all(gsh_dir()).expect("Failed to create .gsh directory");
             std::fs::File::create(&path).expect("Failed to create id_files.json file");
         }
-        // Load the file and parse it into an IdFiles struct
         let file = std::fs::File::open(&path).expect("Failed to open id_files.json file");
         let reader = std::io::BufReader::new(file);
         serde_json::from_reader(reader).unwrap_or_else(|_| IdFiles::default())
@@ -170,7 +168,7 @@ impl IdFiles {
 
     pub fn create_id_file(&mut self, name: &str) -> PathBuf {
         let mut rng = OsRng;
-        let bits = 2048; // Key size in bits
+        let bits = 2048;
         let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate a key");
         let public_key = RsaPublicKey::from(&private_key);
         let pem = cert::keys_to_pem(&private_key, &public_key);

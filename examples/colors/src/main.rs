@@ -80,7 +80,6 @@ impl ColorService {
         stream
             .send(Frame {
                 window_id,
-                // data: frame.to_vec(),
                 segments: optimize_segments(
                     &self.cur_frame,
                     FRAME_WIDTH,
@@ -93,11 +92,9 @@ impl ColorService {
             })
             .await?;
 
-        // Flush once per-frame to ensure the data is sent without flushing per-message.
+        // Batch both windows before flushing.
         stream.flush().await?;
 
-        // Rotate ping-pong buffers: move cur_frame into prev_frame storage and
-        // reuse the old prev_frame buffer as the next cur_frame to avoid copies.
         let new_frame = self
             .prev_frame
             .update_with_frame(std::mem::take(&mut self.cur_frame));
@@ -162,8 +159,6 @@ impl GshService for ColorService {
     }
 }
 
-// The `GshServiceExt` trait provides a default event loop implementation,
-// we only need to implement the `events`, `tick` and `handle_event` methods.
 #[async_trait]
 impl GshServiceExt for ColorService {
     async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {

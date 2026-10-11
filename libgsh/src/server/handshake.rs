@@ -12,9 +12,7 @@ use rsa::{pkcs1::DecodeRsaPublicKey, pkcs1v15::Signature};
 use rsa::{pkcs1v15::VerifyingKey, signature::Verifier};
 use sha2::Sha256;
 
-/// Handshake function for the **server side**.
-/// It reads a `ClientHello` message and sends a `ServerHelloAck` response.
-/// If the client version is not compatible, it sends a `StatusUpdate` message and returns an error.
+/// Negotiates protocol settings and optional authentication; rejects incompatible versions.
 pub async fn handshake(
     stream: &mut ServerStream,
     supported_protocol_versions: &[u32],
@@ -42,7 +40,6 @@ pub async fn handshake(
     }
     stream.send(server_hello).await?;
 
-    // Verify ClientAuth message if auth_method is set
     if let Some(AuthMethod::Password(_)) = auth_method {
         let ClientEvent::ClientAuth(client_auth) = stream.receive().await? else {
             return Err(HandshakeError::AnyError(
