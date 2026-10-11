@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
-use libgsh::shared::{
-    prost::{bytes::Bytes, Message},
-    protocol::{
+use libgsh::{
+    client::ClientStream,
+    shared::protocol::{
         self,
         server_hello_ack::{self, window_settings::WindowMode, FrameFormat, WindowSettings},
+        server_message::ServerEvent,
         status_update::{Details, StatusType},
         user_input::{
             self, key_event::KeyAction, mouse_event::MouseAction, window_event::WindowAction,
@@ -12,11 +13,11 @@ use libgsh::shared::{
         Frame, StatusUpdate, UserInput,
     },
 };
-use sdl2::{
+use sdl3::{
     event::{Event, WindowEvent},
-    pixels::PixelFormatEnum,
+    pixels::{Color, PixelFormat},
     rect::Rect,
-    render::Canvas,
+    render::{BlendMode, Canvas},
     video,
 };
 use std::{
@@ -25,44 +26,40 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::network::Messages;
-
 const MAX_FPS: u32 = 60;
 const FRAME_TIME: u64 = 1_000_000_000 / MAX_FPS as u64; // in nanoseconds
 pub type WindowID = u32;
 
 pub struct SdlWindow {
     // pub server_window_id: WindowID,
-    // pub texture_creator: sdl2::render::TextureCreator<video::WindowContext>,
-    // pub current_texture: sdl2::render::Texture<'static>,
+    // pub texture_creator: sdl3::render::TextureCreator<video::WindowContext>,
+    // pub current_texture: sdl3::render::Texture<'static>,
     pub canvas: Canvas<video::Window>,
     // pub current_frame: Option<Frame>,
 }
 
 pub struct Client {
-    sdl: sdl2::Sdl,
-    video: sdl2::VideoSubsystem,
+    sdl: sdl3::Sdl,
+    video: sdl3::VideoSubsystem,
     format: FrameFormat,
     compression: Option<protocol::server_hello_ack::Compression>,
-    /// Mapping from SDL2 window ID to SDL2 canvas video::Window
+    /// Mapping from SDL window ID to SDL canvas video::Window
     windows: HashMap<WindowID, SdlWindow>,
-    /// Mapping from server ID to SDL2 window ID
+    /// Mapping from server ID to SDL window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
-    messages: Messages,
+    stream: ClientStream,
 }
 
 impl Client {
     pub fn new(
-        sdl: sdl2::Sdl,
-        video: sdl2::VideoSubsystem,
+        sdl: sdl3::Sdl,
+        video: sdl3::VideoSubsystem,
         format: FrameFormat,
         compression: Option<protocol::server_hello_ack::Compression>,
-        messages: Messages,
-    ) -> Result<Self> {
-        // let sdl_context = sdl2::init().map_err(|e| anyhow!(e))?;
-        // let video_subsystem = sdl_context.video().map_err(|e| anyhow!(e))?;
-        Ok(Client {
+        stream: ClientStream,
+    ) -> Self {
+        Client {
             sdl,
             video,
             format,
@@ -70,24 +67,27 @@ impl Client {
             windows: HashMap::new(),
             server_window_to_sdl_window: HashMap::new(),
             sdl_window_to_server_window: HashMap::new(),
-            messages,
-        })
+            stream,
+        }
     }
 
-    pub fn messages(&mut self) -> &mut Messages {
-        &mut self.messages
+    pub fn inner_stream(&mut self) -> &mut ClientStream {
+        &mut self.stream
     }
 
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
         let mut window = self.video.window(&ws.title, ws.width, ws.height);
         if let Some(monitor_id) = ws.monitor_id {
-            let monitor = self
-                .video
-                .display_bounds(monitor_id as i32)
-                .map_err(|e| anyhow!(e))?;
-            let x = monitor.x() + ((monitor.width() as i32) - ws.width as i32) / 2;
-            let y = monitor.y() + ((monitor.height() as i32) - ws.height as i32) / 2;
-            window.position(x, y);
+            // SDL3 exposes displays() which returns a Vec<Display>; use it to get bounds
+            if let Ok(displays) = self.video.displays() {
+                if let Some(display) = displays.get(monitor_id as usize) {
+                    if let Ok(bounds) = display.get_bounds() {
+                        let x = bounds.x() + ((bounds.width() as i32) - ws.width as i32) / 2;
+                        let y = bounds.y() + ((bounds.height() as i32) - ws.height as i32) / 2;
+                        window.position(x, y);
+                    }
+                }
+            }
         } else {
             window.position_centered();
         }
@@ -103,7 +103,8 @@ impl Client {
         }
         let window = window.build().map_err(|e| anyhow!(e))?;
         let sdl_window_id = window.id();
-        let mut canvas = window.into_canvas().build().map_err(|e| anyhow!(e))?;
+        // SDL3's into_canvas API returns a Canvas directly
+        let mut canvas = window.into_canvas();
         self.server_window_to_sdl_window
             .insert(ws.window_id, sdl_window_id);
         self.sdl_window_to_server_window
@@ -122,36 +123,59 @@ impl Client {
     async fn destroy_window(&mut self, window_id: WindowID) -> Result<()> {
         if let Some(mut win) = self.windows.remove(&window_id) {
             win.canvas.window_mut().hide();
-            self.messages
-                .write_message(protocol::UserInput {
-                    kind: protocol::user_input::InputType::WindowEvent as i32,
-                    window_id,
-                    input_event: Some(protocol::user_input::InputEvent::WindowEvent(
-                        user_input::WindowEvent {
-                            action: WindowAction::Close as i32,
-                            x: 0,
-                            y: 0,
-                            width: 0,
-                            height: 0,
-                        },
-                    )),
-                })
-                .await?;
-            // Remove the window from the mapping
+            // Translate SDL window id to server window id if possible
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
+                // Remove reverse mapping
                 self.server_window_to_sdl_window.remove(&server_window_id);
+                self.stream
+                    .send(protocol::UserInput {
+                        window_id: server_window_id,
+                        kind: protocol::user_input::InputType::WindowEvent as i32,
+                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                            user_input::WindowEvent {
+                                action: WindowAction::Close as i32,
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            },
+                        )),
+                    })
+                    .await?;
+                log::info!(
+                    "Window ID {} destroyed (server id {})",
+                    window_id,
+                    server_window_id
+                );
+            } else {
+                // Fallback: send to window 0 if no mapping exists
+                self.stream
+                    .send(protocol::UserInput {
+                        window_id: 0,
+                        kind: protocol::user_input::InputType::WindowEvent as i32,
+                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                            user_input::WindowEvent {
+                                action: WindowAction::Close as i32,
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            },
+                        )),
+                    })
+                    .await?;
+                log::info!("Window ID {} destroyed (no server mapping)", window_id);
             }
-            log::info!("Window ID {} destroyed", window_id);
         } else {
             log::warn!("Window ID {} not found (not destroyed)", window_id);
         }
         Ok(())
     }
 
-    fn get_format(&self) -> PixelFormatEnum {
+    fn get_format(&self) -> PixelFormat {
         match self.format {
-            FrameFormat::Rgba => PixelFormatEnum::RGBA32,
-            FrameFormat::Rgb => PixelFormatEnum::RGB24,
+            FrameFormat::Rgba => PixelFormat::RGBA32,
+            FrameFormat::Rgb => PixelFormat::RGB24,
         }
     }
 
@@ -166,11 +190,11 @@ impl Client {
         &mut self,
         window_id: WindowID,
         action: KeyAction,
-        keycode: sdl2::keyboard::Keycode,
-        keymod: sdl2::keyboard::Mod,
+        keycode: sdl3::keyboard::Keycode,
+        keymod: sdl3::keyboard::Mod,
     ) -> Result<()> {
-        self.messages
-            .write_message(UserInput {
+        self.stream
+            .send(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -178,7 +202,7 @@ impl Client {
                 kind: InputType::KeyEvent as i32,
                 input_event: Some(user_input::InputEvent::KeyEvent(user_input::KeyEvent {
                     action: action as i32,
-                    key_code: keycode.into_i32(),
+                    key_code: keycode as i32,
                     modifiers: keymod.bits() as u32,
                 })),
             })
@@ -191,31 +215,42 @@ impl Client {
         &mut self,
         window_id: WindowID,
         action: MouseAction,
-        button: Option<sdl2::mouse::MouseButton>,
+        button: Option<sdl3::mouse::MouseButton>,
         mouse_x: i32,
         mouse_y: i32,
         delta_x: f32,
         delta_y: f32,
     ) -> Result<()> {
         let button = match button {
-            Some(sdl2::mouse::MouseButton::Left) => {
+            Some(sdl3::mouse::MouseButton::Left) => {
                 user_input::mouse_event::MouseButton::Left as i32
             }
-            Some(sdl2::mouse::MouseButton::Middle) => {
+            Some(sdl3::mouse::MouseButton::Middle) => {
                 user_input::mouse_event::MouseButton::Middle as i32
             }
-            Some(sdl2::mouse::MouseButton::Right) => {
+            Some(sdl3::mouse::MouseButton::Right) => {
                 user_input::mouse_event::MouseButton::Right as i32
             }
             _ => 0,
         };
 
-        self.messages
-            .write_message(UserInput {
-                window_id: *self
-                    .sdl_window_to_server_window
-                    .get(&window_id)
-                    .unwrap_or(&0),
+        let server_window_id = *self
+            .sdl_window_to_server_window
+            .get(&window_id)
+            .unwrap_or(&0);
+        log::trace!(
+            "Sending mouse event -> server_window_id={}, action={:?}, x={}, y={}, button={}, dx={}, dy={}",
+            server_window_id,
+            action,
+            mouse_x,
+            mouse_y,
+            button,
+            delta_x,
+            delta_y
+        );
+        self.stream
+            .send(UserInput {
+                window_id: server_window_id,
                 kind: InputType::MouseEvent as i32,
                 input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
                     action: action as i32,
@@ -239,8 +274,8 @@ impl Client {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self.messages
-            .write_message(UserInput {
+        self.stream
+            .send(UserInput {
                 window_id: *self
                     .sdl_window_to_server_window
                     .get(&window_id)
@@ -260,46 +295,51 @@ impl Client {
         Ok(())
     }
 
-    async fn handle_event(&mut self, event: Event) -> Result<bool> {
+    async fn handle_window_event(&mut self, event: Event) -> Result<bool> {
+        log::trace!("SDL event: {:?}", event);
         match event {
             Event::Quit { .. } => {
                 log::trace!("Received quit event, exiting...");
                 return Ok(false);
             }
             Event::Window {
-                win_event: WindowEvent::Close,
+                win_event,
                 window_id,
                 ..
             } => {
-                self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
+                // SDL3's WindowEvent variants may differ; handle common ones and
+                // fall back to checking the debug string for Close-type events.
+                if win_event == WindowEvent::CloseRequested {
+                    self.window_event(window_id, WindowAction::Close, 0, 0, 0, 0)
+                        .await?;
+                    log::trace!("Window {} closed", window_id);
+                    self.destroy_window(window_id).await?;
+                } else if let WindowEvent::Resized(width, height) = win_event {
+                    self.window_event(
+                        window_id,
+                        WindowAction::Resize,
+                        0,
+                        0,
+                        width as u32,
+                        height as u32,
+                    )
                     .await?;
-                log::trace!("Window {} closed", window_id);
-                self.destroy_window(window_id).await?;
-            }
-            Event::Window {
-                win_event: WindowEvent::Resized(width, height),
-                window_id,
-                ..
-            } => {
-                self.window_event(
-                    window_id,
-                    WindowAction::Resize,
-                    0,
-                    0,
-                    width as u32,
-                    height as u32,
-                )
-                .await?;
-                log::trace!("Window {} resized to {}x{}", window_id, width, height);
-            }
-            Event::Window {
-                win_event: WindowEvent::Moved(x, y),
-                window_id,
-                ..
-            } => {
-                self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
-                    .await?;
-                log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                    log::trace!("Window {} resized to {}x{}", window_id, width, height);
+                } else if let WindowEvent::Moved(x, y) = win_event {
+                    self.window_event(window_id, WindowAction::Move, x, y, 0, 0)
+                        .await?;
+                    log::trace!("Window {} moved to ({}, {})", window_id, x, y);
+                } else if win_event == WindowEvent::MouseEnter {
+                    // Mouse entered the window (fallback via debug string)
+                    self.mouse_event(window_id, MouseAction::Enter, None, 0, 0, 0.0, 0.0)
+                        .await?;
+                    log::trace!("Mouse entered window {}", window_id);
+                } else if win_event == WindowEvent::MouseLeave {
+                    // Mouse left the window (fallback via debug string)
+                    self.mouse_event(window_id, MouseAction::Exit, None, 0, 0, 0.0, 0.0)
+                        .await?;
+                    log::trace!("Mouse left window {}", window_id);
+                }
             }
             Event::KeyDown {
                 keycode: Some(keycode),
@@ -322,8 +362,16 @@ impl Client {
             Event::MouseMotion {
                 window_id, x, y, ..
             } => {
-                self.mouse_event(window_id, MouseAction::Move, None, x, y, 0.0, 0.0)
-                    .await?;
+                self.mouse_event(
+                    window_id,
+                    MouseAction::Move,
+                    None,
+                    x as i32,
+                    y as i32,
+                    0.0,
+                    0.0,
+                )
+                .await?;
                 log::trace!("Mouse moved in window {}: ({}, {})", window_id, x, y);
             }
             Event::MouseButtonDown {
@@ -337,8 +385,8 @@ impl Client {
                     window_id,
                     MouseAction::Press,
                     Some(mouse_btn),
-                    x,
-                    y,
+                    x as i32,
+                    y as i32,
                     0.0,
                     0.0,
                 )
@@ -361,8 +409,8 @@ impl Client {
                     window_id,
                     MouseAction::Release,
                     Some(mouse_btn),
-                    x,
-                    y,
+                    x as i32,
+                    y as i32,
                     0.0,
                     0.0,
                 )
@@ -375,29 +423,24 @@ impl Client {
                 );
             }
             Event::MouseWheel {
-                window_id,
-                direction: _direction,
-                precise_x,
-                precise_y,
-                mouse_x,
-                mouse_y,
-                ..
+                window_id, x, y, ..
             } => {
+                // SDL3 MouseWheel fields differ; use x/y as deltas. Position may not be available.
                 self.mouse_event(
                     window_id,
                     MouseAction::Scroll,
                     None,
-                    mouse_x,
-                    mouse_y,
-                    precise_x,
-                    precise_y,
+                    0,
+                    0,
+                    x as f32,
+                    y as f32,
                 )
                 .await?;
                 log::trace!(
-                    "Mouse wheel scrolled in window {}: ({}, {})",
+                    "Mouse wheel scrolled in window {}: delta=({}, {})",
                     window_id,
-                    mouse_x,
-                    mouse_y,
+                    x,
+                    y
                 );
             }
             _ => {
@@ -412,9 +455,9 @@ impl Client {
         let mut last_frame_time = Instant::now();
         'running: loop {
             // Read messages from the server
-            match self.messages.read_message().await {
-                Ok(buf) => {
-                    if !self.handle_message(&buf).await? {
+            match self.stream.receive().await {
+                Ok(event) => {
+                    if !self.handle_server_event(event).await? {
                         break 'running;
                     }
                 }
@@ -435,9 +478,9 @@ impl Client {
                 },
             };
 
-            // Events from SDL2 windows
+            // Events from SDL windows
             for event in event_pump.poll_iter() {
-                if !self.handle_event(event).await? {
+                if !self.handle_window_event(event).await? {
                     break 'running;
                 }
             }
@@ -455,22 +498,22 @@ impl Client {
             }
             last_frame_time = Instant::now();
         }
-        log::trace!("Exiting main loop...");
         for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
             self.destroy_window(window_id).await?;
         }
         Ok(())
     }
 
-    async fn handle_message(&mut self, buf: &Bytes) -> Result<bool> {
-        if let Ok(frame) = Frame::decode(&buf[..]) {
-            self.render_frame(frame)?;
-            Ok(true)
-        } else if let Ok(status_update) = StatusUpdate::decode(&buf[..]) {
-            self.handle_status_update(status_update).await
-        } else {
-            log::error!("Failed to decode message: {:?}", &buf[..]);
-            return Err(anyhow!("Failed to decode message"));
+    async fn handle_server_event(&mut self, event: ServerEvent) -> Result<bool> {
+        match event {
+            ServerEvent::StatusUpdate(status_update) => {
+                self.handle_status_update(status_update).await
+            }
+            ServerEvent::Frame(frame) => self.render_frame(frame),
+            other => {
+                log::error!("Unexpected server event: {:?}", other);
+                return Err(anyhow!("Unexpected server event"));
+            }
         }
     }
 
@@ -510,10 +553,10 @@ impl Client {
         }
     }
 
-    fn render_frame(&mut self, frame: Frame) -> Result<()> {
+    fn render_frame(&mut self, frame: Frame) -> Result<bool> {
         if frame.segments.is_empty() || frame.width == 0 || frame.height == 0 {
             log::warn!("Received empty frame, skipping rendering.");
-            return Ok(());
+            return Ok(true); // Keep going
         }
         log::debug!(
             "Received frame of size {}x{} and {} segments",
@@ -534,6 +577,11 @@ impl Client {
             let texture_creator = win.canvas.texture_creator();
             let mut texture =
                 texture_creator.create_texture_target(format, frame.width, frame.height)?;
+            // Ensure the texture does not blend with the existing canvas contents.
+            let _ = texture.set_blend_mode(BlendMode::None);
+            // Clear the canvas first so previous frames don't persist beneath the new one.
+            win.canvas.set_draw_color(Color::BLACK);
+            win.canvas.clear();
             // Apply all segments of the frame to the window
             for segment in &frame.segments {
                 if segment.width == 0 || segment.height == 0 {
@@ -577,6 +625,6 @@ impl Client {
                 server_window_id
             );
         }
-        Ok(())
+        Ok(true) // Keep going
     }
 }

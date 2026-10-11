@@ -1,6 +1,8 @@
 use auth::ClientAuthProvider;
-use clap::{Parser, Subcommand};
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 use client::Client;
+use env_logger::fmt::WriteStyle;
 use libgsh::{
     rsa::{pkcs1v15::VerifyingKey, signature::Verifier},
     sha2::Sha256,
@@ -15,11 +17,13 @@ use libgsh::{
         },
     },
 };
+use std::io::IsTerminal;
 use std::process::exit;
 
 mod auth;
 mod client;
 mod config;
+mod display;
 mod network;
 
 #[derive(Parser, Debug)]
@@ -44,87 +48,143 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Manage ID files
+    Id {
+        #[clap(subcommand)]
+        command: IdCommand,
+    },
+    /// Manage known hosts
+    Host {
+        #[clap(subcommand)]
+        command: HostCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum IdCommand {
     /// Create a new named ID file
-    NewId {
+    New {
         /// The name of the ID file
         name: String,
     },
-    /// List all known hosts
-    ListHosts,
     /// List all IDs
-    ListIds,
+    List,
     /// Verify the ID files
-    VerifyId {
+    Verify {
         /// The name of the ID file
         name: String,
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum HostCommand {
+    /// List all known hosts
+    List,
+}
+
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+    let color_choice = color_choice();
+
+    // Show info logs by default so input events are visible during interactive use
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .write_style(match color_choice {
+            ColorChoice::Always => WriteStyle::Always,
+            ColorChoice::Never => WriteStyle::Never,
+            ColorChoice::Auto => WriteStyle::Auto,
+        })
         .format_line_number(true)
         .format_timestamp(None)
         .init();
-    let args = Args::parse();
+
+    // Force colored help/errors by default (unless NO_COLOR / TERM=dumb).
+    let mut cmd = Args::command();
+    cmd = cmd.color(color_choice);
+    cmd = cmd.styles(clap_styles());
+    let matches = cmd.get_matches();
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     let known_hosts = config::KnownHosts::load();
     let mut id_files = config::IdFiles::load();
 
     if let Some(command) = args.command {
         match command {
-            Command::NewId { name } => {
-                let path = id_files.create_id_file(&name);
-                println!("ID file created at {} for {}", path.display(), name);
-            }
-            Command::ListHosts => {
-                println!("Known hosts:");
-                for host in known_hosts.hosts {
-                    println!("Host: {}, Fingerprints: {:?}", host.host, host.fingerprints);
+            Command::Id { command } => match command {
+                IdCommand::New { name } => {
+                    let path = id_files.create_id_file(&name);
+                    println!("ID file created at {} for {}", path.display(), name);
                 }
-            }
-            Command::ListIds => {
-                println!("ID files:");
-                for (id_name, id_file) in id_files.files() {
-                    println!("- {}: {}", id_name, id_file.display());
+                IdCommand::List => {
+                    let mut rows: Vec<(String, String)> = id_files
+                        .files()
+                        .into_iter()
+                        .map(|(name, path)| (name, path.display().to_string()))
+                        .collect();
+                    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    let table_rows: Vec<Vec<String>> = rows
+                        .into_iter()
+                        .map(|(name, path)| vec![name, path])
+                        .collect();
+                    display::print_table(&["NAME", "PATH"], &table_rows, color_choice);
                 }
-            }
-            Command::VerifyId { name } => {
-                const MESSAGE: &[u8] = b"test";
-                let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
-                match provider.signature("", MESSAGE) {
-                    Some((signature, pub_key)) => {
-                        log::trace!("Public key: {:?}", pub_key);
-                        log::trace!("Signature: {:?}", signature);
-                        let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
-                        if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
-                            log::error!("Signature verification failed: {}", err);
-                            println!("Signature verification failed!");
-                        } else {
-                            println!("Successfully verified ID!");
+                IdCommand::Verify { name } => {
+                    const MESSAGE: &[u8] = b"test";
+                    let mut provider = ClientAuthProvider::new(known_hosts, id_files, Some(name));
+                    match provider.signature("", MESSAGE) {
+                        Some((signature, pub_key)) => {
+                            log::trace!("Public key: {:?}", pub_key);
+                            log::trace!("Signature: {:?}", signature);
+                            let verifier_key = VerifyingKey::<Sha256>::new(pub_key);
+                            if let Err(err) = verifier_key.verify(MESSAGE, &signature) {
+                                log::error!("Signature verification failed: {}", err);
+                                println!("Signature verification failed!");
+                            } else {
+                                println!("Successfully verified ID!");
+                            }
+                        }
+                        None => {
+                            println!("Invalid ID file or no public key found.");
                         }
                     }
-                    None => {
-                        println!("Invalid ID file or no public key found.");
-                    }
                 }
-            }
+            },
+            Command::Host { command } => match command {
+                HostCommand::List => {
+                    let mut rows: Vec<(String, String, String)> = known_hosts
+                        .hosts
+                        .iter()
+                        .map(|h| {
+                            let fp = display::fingerprints_summary(&h.fingerprints);
+                            let id = h.id_file_ref.clone().unwrap_or_else(|| "-".to_string());
+                            (h.host.clone(), id, fp)
+                        })
+                        .collect();
+                    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    let table_rows: Vec<Vec<String>> = rows
+                        .into_iter()
+                        .map(|(host, id, fp)| vec![host, id, fp])
+                        .collect();
+                    display::print_table(&["HOST", "ID", "FINGERPRINT"], &table_rows, color_choice);
+                }
+            },
         }
         return;
     }
 
-    // Initialize SDL2
-    let sdl = sdl2::init().unwrap_or_else(|e| {
-        log::error!("Failed to initialize SDL2: {}", e);
+    // Initialize SDL3
+    let sdl = sdl3::init().unwrap_or_else(|e| {
+        log::error!("Failed to initialize SDL3: {}", e);
         exit(1);
     });
     let video = sdl.video().unwrap_or_else(|e| {
-        log::error!("Failed to initialize SDL2 video subsystem: {}", e);
+        log::error!("Failed to initialize SDL3 video subsystem: {}", e);
         exit(1);
     });
 
     let host = args.host.unwrap_or_else(|| {
-        log::error!("Host is required unless creating an ID file.");
+        log::error!("Host is required unless running a subcommand.");
         exit(1);
     });
 
@@ -150,18 +210,12 @@ async fn main() {
     let compression = hello.compression;
     println!("Successfully connected to server!");
 
-    let mut client = match Client::new(sdl, video, format, compression, messages) {
-        Ok(client) => client,
-        Err(e) => {
-            log::error!("Failed to create client: {}", e);
-            exit(1);
-        }
-    };
+    let mut client = Client::new(sdl, video, format, compression, messages);
 
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
         client
-            .create_window(&default_window(host))
+            .create_window(&default_window(&host))
             .unwrap_or_else(|e| {
                 log::error!("Failed to create default window: {}", e);
                 exit(1);
@@ -179,37 +233,73 @@ async fn main() {
         log::error!("Client error: {}", e);
         exit(1);
     }
-
-    let _ = network::shutdown_tls(client.messages()).await;
+    log::info!("Shutting down client...");
+    let _ = network::shutdown_tls(client.inner_stream()).await;
 }
 
-fn monitor_info(video: &sdl2::VideoSubsystem) -> Vec<MonitorInfo> {
-    let displays = video.num_video_displays().unwrap_or(0);
+fn color_choice() -> ColorChoice {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return ColorChoice::Never;
+    }
+    if matches!(std::env::var("TERM").as_deref(), Ok("dumb")) {
+        return ColorChoice::Never;
+    }
+    if !std::io::stdout().is_terminal() {
+        return ColorChoice::Never;
+    }
+    ColorChoice::Always
+}
+
+fn clap_styles() -> Styles {
+    Styles::styled()
+        .usage(
+            AnsiColor::Yellow
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .header(
+            AnsiColor::Yellow
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .literal(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default().effects(Effects::BOLD))
+        .error(AnsiColor::Red.on_default().effects(Effects::BOLD))
+        .valid(
+            AnsiColor::Green
+                .on_default()
+                .effects(Effects::BOLD | Effects::UNDERLINE),
+        )
+        .placeholder(AnsiColor::White.on_default())
+}
+
+fn monitor_info(video: &sdl3::VideoSubsystem) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
-    for i in 0..displays {
-        if let Ok(bounds) = video.display_bounds(i) {
-            // x,y,w,h
-            if let Ok(mode) = video.desktop_display_mode(i) {
-                // refresh_rate, etc.
-                monitors.push(MonitorInfo {
-                    monitor_id: i as u32,
-                    x: bounds.x(),
-                    y: bounds.y(),
-                    width: bounds.width(),
-                    height: bounds.height(),
-                    refresh_hz: mode.refresh_rate as u32,
-                });
+    if let Ok(displays) = video.displays() {
+        for (i, display) in displays.iter().enumerate() {
+            // display.bounds() and display.desktop_mode() are SDL3 APIs exposed by the crate
+            if let Ok(bounds) = display.get_bounds() {
+                if let Ok(mode) = display.get_mode() {
+                    monitors.push(MonitorInfo {
+                        monitor_id: i as u32,
+                        x: bounds.x(),
+                        y: bounds.y(),
+                        width: bounds.width(),
+                        height: bounds.height(),
+                        refresh_hz: mode.refresh_rate as u32,
+                    });
+                } else {
+                    log::warn!("Failed to get display mode for monitor {}", i);
+                }
             } else {
-                log::warn!("Failed to get display mode for monitor {}", i);
+                log::warn!("Failed to get display bounds for monitor {}", i);
             }
-        } else {
-            log::warn!("Failed to get display bounds for monitor {}", i);
         }
     }
     monitors
 }
 
-fn default_window(host: String) -> WindowSettings {
+fn default_window(host: &str) -> WindowSettings {
     WindowSettings {
         window_id: 0,
         monitor_id: None,

@@ -7,7 +7,7 @@ use tokio_rustls::rustls::pki_types::{pem::PemObject, PrivateKeyDer};
 
 // Generate a self-signed certificate
 pub fn self_signed<T: AsRef<str>>(
-    alt_names: &[T],
+    alt_names: &'_ [T],
 ) -> Result<(CertifiedKey, PrivateKeyDer<'_>), rcgen::Error> {
     let subject_alt_names = alt_names
         .iter()
@@ -75,14 +75,14 @@ pub fn keys_to_pem(private_key: &RsaPrivateKey, public_key: &RsaPublicKey) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsa::{RsaPrivateKey, traits::{PublicKeyParts, PrivateKeyParts}};
     use rand::rngs::OsRng;
+    use rsa::{traits::PublicKeyParts, RsaPrivateKey};
 
     #[test]
     fn test_self_signed_certificate_generation() {
         let alt_names = ["localhost", "127.0.0.1"];
         let result = self_signed(&alt_names);
-        
+
         assert!(result.is_ok());
         let (cert_key, private_key) = result.unwrap();
         assert!(!cert_key.cert.der().is_empty());
@@ -101,9 +101,9 @@ mod tests {
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let public_key = RsaPublicKey::from(&private_key);
-        
+
         let pem = keys_to_pem(&private_key, &public_key);
-        
+
         assert!(pem.contains("-----BEGIN RSA PRIVATE KEY-----"));
         assert!(pem.contains("-----END RSA PRIVATE KEY-----"));
         assert!(pem.contains("-----BEGIN RSA PUBLIC KEY-----"));
@@ -115,10 +115,10 @@ mod tests {
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let public_key = RsaPublicKey::from(&private_key);
-        
+
         let pem = keys_to_pem(&private_key, &public_key);
         let extracted = extract_public_key(&pem);
-        
+
         assert!(extracted.is_some());
         let extracted_key = extracted.unwrap();
         assert_eq!(extracted_key.n(), public_key.n());
@@ -130,10 +130,10 @@ mod tests {
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let public_key = RsaPublicKey::from(&private_key);
-        
+
         let pem = keys_to_pem(&private_key, &public_key);
         let extracted = extract_private_key(&pem);
-        
+
         assert!(extracted.is_some());
         let extracted_key = extracted.unwrap();
         assert_eq!(extracted_key.n(), private_key.n());
@@ -158,11 +158,11 @@ mod tests {
         let mut rng = OsRng;
         let original_private = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let original_public = RsaPublicKey::from(&original_private);
-        
+
         let pem = keys_to_pem(&original_private, &original_public);
         let extracted_private = extract_private_key(&pem).unwrap();
         let extracted_public = extract_public_key(&pem).unwrap();
-        
+
         // Verify keys match
         assert_eq!(extracted_private.n(), original_private.n());
         assert_eq!(extracted_public.n(), original_public.n());

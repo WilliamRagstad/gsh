@@ -1,25 +1,21 @@
-use std::{
-    io::Write,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Instant,
-};
-
 use libgsh::{
     async_trait::async_trait,
-    cert,
-    frame::full_frame_segment,
-    r#async::{
-        server::AsyncServer,
-        service::{AsyncService, AsyncServiceExt},
-        Messages,
-    },
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
+    shared::cert,
+    shared::frame::full_frame_segment,
     shared::protocol::{
+        client_message,
         server_hello_ack::{self, window_settings, FrameFormat, WindowSettings, ZstdCompression},
         Frame, ServerHelloAck,
     },
     tokio,
     tokio_rustls::rustls::ServerConfig,
     ServiceError,
+};
+use std::{
+    io::Write,
+    sync::{mpsc::Receiver, Arc, Mutex},
+    time::Instant,
 };
 use xcap::Monitor;
 
@@ -65,13 +61,13 @@ async fn main() {
         .start()
         .expect("Failed to start video recorder");
 
-    // Unsafe transmute to convert video_stream Recorder to XCapFrame reciever
+    // Unsafe transmute to convert video_stream Recorder to XCapFrame receiver
     // Ugly hack because `xcap::video_recorder::Frame` is not public.
     let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
     let recorder = Arc::new(Mutex::new(video_stream));
 
     // Start service
-    let server = AsyncServer::new(RdpService::new(recorder), config);
+    let server = GshServer::new(RdpService::new(recorder), config);
     server.serve().await.unwrap();
 }
 
@@ -91,7 +87,7 @@ impl RdpService {
 }
 
 #[async_trait]
-impl AsyncService for RdpService {
+impl GshService for RdpService {
     fn server_hello(&self) -> libgsh::shared::protocol::ServerHelloAck {
         ServerHelloAck {
             windows: vec![WindowSettings {
@@ -114,33 +110,33 @@ impl AsyncService for RdpService {
         }
     }
 
-    async fn main(self, messages: Messages) -> libgsh::Result<()> {
-        <Self as AsyncServiceExt>::main(self, messages).await
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 }
 
 #[async_trait]
-impl AsyncServiceExt for RdpService {
+impl GshServiceExt for RdpService {
     async fn on_event(
         &mut self,
-        _messages: &mut Messages,
-        event: libgsh::shared::ClientEvent,
+        _stream: &mut ServerStream,
+        event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
         log::info!("Received event: {:?}", event);
         Ok(())
     }
 
-    async fn on_tick(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
-            messages.write_message(self.get_frame()?).await?;
+            stream.send(self.get_frame()?).await?;
             self.last_frame = std::time::Instant::now();
             log::debug!("Sent frame");
         }
         Ok(())
     }
 
-    async fn on_startup(&mut self, messages: &mut Messages) -> libgsh::Result<()> {
-        messages.write_message(self.get_frame()?).await?;
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
+        stream.send(self.get_frame()?).await?;
         log::debug!("Sent initial frame");
         Ok(())
     }

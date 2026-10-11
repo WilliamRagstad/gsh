@@ -61,7 +61,7 @@ This document summarizes the comprehensive benchmarking and testing infrastructu
 
 ### Benchmark Server (`benches/src/benchmark_server.rs`)
 Configurable test server implementation:
-- Implements full GSH AsyncService interface
+- Implements full GSH GshService interface
 - Generates predictable frame patterns for consistent testing
 - Supports multiple resolutions and data patterns
 - Provides controlled load scenarios

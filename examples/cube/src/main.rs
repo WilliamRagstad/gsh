@@ -1,20 +1,16 @@
 use env_logger::Env;
 use libgsh::{
     async_trait::async_trait,
-    cert,
-    frame::full_frame_segment,
-    r#async::{
-        server::AsyncServer,
-        service::{AsyncService, AsyncServiceExt},
-        Messages,
-    },
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
+        cert,
+        frame::full_frame_segment,
         protocol::{
+            client_message::ClientEvent,
             server_hello_ack::{window_settings, FrameFormat, WindowSettings},
             user_input::{window_event::WindowAction, InputEvent},
             Frame, ServerHelloAck,
         },
-        ClientEvent,
     },
     tokio,
     tokio_rustls::rustls::{crypto::ring, ServerConfig},
@@ -46,7 +42,7 @@ async fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server = AsyncServer::new(CubeService::default(), config);
+    let server = GshServer::new(CubeService::default(), config);
     server.serve().await.unwrap();
 }
 
@@ -70,18 +66,12 @@ impl Default for CubeService {
 }
 
 impl CubeService {
-    async fn send_frame(&mut self, messages: &mut Messages) -> Result<()> {
+    async fn send_frame(&mut self, stream: &mut ServerStream) -> Result<()> {
         let frame = self.draw_cube(4);
-        messages
-            .write_message(Frame {
+        stream
+            .send(Frame {
                 window_id: WINDOW_ID,
-                segments: full_frame_segment(
-                    &frame,
-                    self.width,
-                    self.height,
-                    // &mut self.prev_frame,
-                    // PIXEL_BYTES,
-                ),
+                segments: full_frame_segment(&frame, self.width, self.height),
                 width: self.width as u32,
                 height: self.height as u32,
             })
@@ -200,9 +190,9 @@ impl CubeService {
 }
 
 #[async_trait]
-impl AsyncService for CubeService {
-    async fn main(self, messages: Messages) -> Result<()> {
-        <Self as AsyncServiceExt>::main(self, messages).await
+impl GshService for CubeService {
+    async fn main(self, stream: ServerStream) -> Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 
     fn server_hello(&self) -> ServerHelloAck {
@@ -227,18 +217,18 @@ impl AsyncService for CubeService {
 }
 
 #[async_trait]
-impl AsyncServiceExt for CubeService {
+impl GshServiceExt for CubeService {
     const MAX_FPS: u32 = MAX_FPS;
 
-    async fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages).await
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
+        self.send_frame(stream).await
     }
 
-    async fn on_tick(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages).await
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> Result<()> {
+        self.send_frame(stream).await
     }
 
-    async fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         log::trace!("Got event: {:?}", event);
         if let ClientEvent::UserInput(input) = &event {
             if let InputEvent::WindowEvent(window_event) = input.input_event.unwrap() {
@@ -246,7 +236,7 @@ impl AsyncServiceExt for CubeService {
                     if input.window_id == WINDOW_ID {
                         self.width = window_event.width as usize;
                         self.height = window_event.height as usize;
-                        self.send_frame(messages).await?;
+                        self.send_frame(stream).await?;
                         log::info!(
                             "WindowEvent: Resize event for window {}: {}x{}",
                             input.window_id,

@@ -1,0 +1,453 @@
+use env_logger::Env;
+use glam::Vec2;
+use libgsh::{
+    async_trait::async_trait,
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
+    shared::cert,
+    shared::frame::full_frame_segment,
+    shared::protocol::{
+        client_message::ClientEvent,
+        server_hello_ack::{
+            window_settings, Compression, FrameFormat, WindowSettings, ZstdCompression,
+        },
+        user_input::{mouse_event::MouseAction, window_event::WindowAction, InputEvent},
+        Frame, ServerHelloAck,
+    },
+    tokio,
+    tokio_rustls::rustls::{crypto::ring, ServerConfig},
+    Result, ServiceError,
+};
+use rayon::prelude::*;
+use std::time::Instant;
+
+const WINDOW_ID: u32 = 0;
+const INITIAL_WIDTH: usize = 512;
+const INITIAL_HEIGHT: usize = 512;
+const MAX_FPS: u32 = 60;
+const PIXEL_BYTES: usize = 4; // RGBA8
+const ZSTD_COMPRESSION_LEVEL: i32 = 3;
+
+// Particle data structure for the simulation
+#[derive(Copy, Clone, Debug)]
+struct Particle {
+    position: Vec2,
+    velocity: Vec2,
+}
+
+#[tokio::main]
+async fn main() {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .format_line_number(true)
+        .format_file(true)
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
+
+    let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
+    ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![key.cert.der().clone()], private_key)
+        .unwrap();
+
+    let service = LiquidSimService::default();
+    let server = GshServer::new(service, config);
+    server.serve().await.unwrap();
+}
+
+#[derive(Debug, Clone)]
+pub struct LiquidSimService {
+    particles: Vec<Particle>,
+    width: usize,
+    height: usize,
+    last_update: Instant,
+    mouse_pos: Option<Vec2>,
+    prev_mouse_pos: Option<Vec2>,
+    // Reusable output buffer for zstd compression to avoid per-frame allocations
+    compress_buf: Vec<u8>,
+}
+
+impl Default for LiquidSimService {
+    fn default() -> Self {
+        Self {
+            particles: Self::init_particles(2048, INITIAL_WIDTH, INITIAL_HEIGHT),
+            width: INITIAL_WIDTH,
+            height: INITIAL_HEIGHT,
+            last_update: Instant::now(),
+            mouse_pos: None,
+            prev_mouse_pos: None,
+            compress_buf: Vec::with_capacity(INITIAL_WIDTH * INITIAL_HEIGHT * PIXEL_BYTES),
+        }
+    }
+}
+
+impl LiquidSimService {
+    fn init_particles(count: usize, width: usize, height: usize) -> Vec<Particle> {
+        use std::f32::consts::PI;
+        let mut particles = Vec::with_capacity(count);
+        let center = Vec2::new(width as f32 * 0.5, height as f32 * 0.5);
+
+        for i in 0..count {
+            let angle = (i as f32 / count as f32) * 2.0 * PI;
+            let radius = (i as f32 / count as f32) * (width.min(height) as f32 * 0.3);
+            let pos = center + Vec2::new(angle.cos() * radius, angle.sin() * radius);
+
+            // Velocity pointing outward with some tangential component
+            // Smaller initial velocities so particles are calmer by default
+            let vel = Vec2::new(
+                angle.cos() * 8.0 + angle.sin() * 3.0,
+                angle.sin() * 8.0 - angle.cos() * 3.0,
+            );
+
+            particles.push(Particle {
+                position: pos,
+                velocity: vel,
+            });
+        }
+
+        particles
+    }
+
+    fn update_particles(&mut self, dt: f32) {
+        let width = self.width as f32;
+        let height = self.height as f32;
+
+        // Update each particle in parallel using rayon
+        self.particles.par_iter_mut().for_each(|particle| {
+            // Apply mild gravity (lower so particles don't constantly slide)
+            let gravity = Vec2::new(0.0, 40.0);
+            particle.velocity += gravity * dt;
+
+            // Apply stronger damping so particles settle to rest quickly
+            let damping = 0.90f32.powf(dt * 60.0);
+            particle.velocity *= damping;
+
+            // Update position
+            particle.position += particle.velocity * dt;
+
+            // Bounce off walls
+            let margin = 5.0;
+            if particle.position.x < margin {
+                particle.position.x = margin;
+                particle.velocity.x = particle.velocity.x.abs() * 0.8;
+            }
+            if particle.position.x > width - margin {
+                particle.position.x = width - margin;
+                particle.velocity.x = -particle.velocity.x.abs() * 0.8;
+            }
+            if particle.position.y < margin {
+                particle.position.y = margin;
+                particle.velocity.y = particle.velocity.y.abs() * 0.8;
+            }
+            if particle.position.y > height - margin {
+                particle.position.y = height - margin;
+                particle.velocity.y = -particle.velocity.y.abs() * 0.8;
+            }
+        });
+
+        // Compute inter-particle forces
+        // Note: This is O(n²) which is intentionally simple for demonstration.
+        // For production with more particles, use spatial partitioning (grid/quadtree)
+        // or limit interaction distance more aggressively.
+        let particles_clone = self.particles.clone();
+        // Make interactions weaker and shorter range so system is calmer
+        let influence_radius = 12.0;
+        let repulsion_strength = 1200.0;
+
+        self.particles
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, particle)| {
+                let mut force = Vec2::ZERO;
+
+                for (j, other) in particles_clone.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+
+                    let diff = particle.position - other.position;
+                    let dist_sq = diff.length_squared();
+
+                    if dist_sq < influence_radius * influence_radius && dist_sq > 0.01 {
+                        let dist = dist_sq.sqrt();
+                        let dir = diff / dist;
+                        let repulsion = repulsion_strength / dist_sq;
+                        force += dir * repulsion;
+                    }
+                }
+
+                particle.velocity += force * dt;
+            });
+
+        // Apply mouse interaction forces based on the position delta between
+        // mouse samples. This is more robust than a strict speed threshold.
+        if let (Some(mouse_pos), Some(prev_mouse_pos)) = (self.mouse_pos, self.prev_mouse_pos) {
+            let mouse_delta = mouse_pos - prev_mouse_pos;
+            let delta_len = mouse_delta.length();
+            let mouse_influence_radius = 80.0;
+            let mouse_strength = 12000.0;
+
+            // If the pointer moved at least a little, apply forces.
+            if delta_len > 0.1 {
+                // Derive a velocity-like vector using frame dt so effect scales sensibly
+                let mouse_velocity = mouse_delta / dt.max(0.001);
+                // log::trace!(
+                //     "Mouse delta: {:.2}, velocity: {:.2}",
+                //     delta_len,
+                //     mouse_velocity.length()
+                // );
+
+                // Scale influence by how large the movement was
+                let mv = mouse_velocity * 0.6;
+                let strength_scale = (delta_len / 30.0).clamp(0.2, 2.0);
+
+                self.particles.par_iter_mut().for_each(|particle| {
+                    let diff = particle.position - mouse_pos;
+                    let dist_sq = diff.length_squared();
+
+                    if dist_sq < mouse_influence_radius * mouse_influence_radius {
+                        let dist = dist_sq.sqrt();
+                        if dist > 0.1 {
+                            // Add velocity based on mouse movement
+                            particle.velocity += mv;
+
+                            // Add a push force away from mouse cursor (weaker with distance)
+                            let dir = diff / dist;
+                            let push_force = mouse_strength * strength_scale / (dist_sq + 400.0);
+                            particle.velocity += dir * push_force * dt;
+                        }
+                    }
+                });
+            }
+        }
+
+        // If particles are very slow, zero them out so they appear to stop
+        self.particles.par_iter_mut().for_each(|particle| {
+            if particle.velocity.length_squared() < 0.5 {
+                particle.velocity = Vec2::ZERO;
+            }
+        });
+    }
+
+    fn render_particles(&self) -> Vec<u8> {
+        // We'll accumulate into float RGBA channels for smooth/soft particles
+        let w = self.width;
+        let h = self.height;
+        let mut accum: Vec<[f32; 4]> = vec![[5.0 / 255.0, 5.0 / 255.0, 12.0 / 255.0, 0.0]; w * h];
+
+        // Render each particle as a soft circle with falloff
+        for particle in &self.particles {
+            let cx = particle.position.x;
+            let cy = particle.position.y;
+
+            // Color based on velocity (cooler when slow, brighter when fast)
+            let speed = particle.velocity.length();
+            let normalized_speed = (speed / 200.0).clamp(0.0, 1.0);
+            let pr = (0.2 + normalized_speed * 0.8) as f32;
+            let pg = (0.4 + normalized_speed * 0.6) as f32;
+            let pb = (0.8 + normalized_speed * 0.2) as f32;
+
+            // Particle visual radius
+            let radius = 6.0 + normalized_speed * 6.0;
+            let r_sq = radius * radius;
+
+            let min_x = ((cx - radius).floor() as isize).max(0) as usize;
+            let max_x = ((cx + radius).ceil() as isize).min((w - 1) as isize) as usize;
+            let min_y = ((cy - radius).floor() as isize).max(0) as usize;
+            let max_y = ((cy + radius).ceil() as isize).min((h - 1) as isize) as usize;
+
+            for py in min_y..=max_y {
+                for px in min_x..=max_x {
+                    let dx = px as f32 + 0.5 - cx;
+                    let dy = py as f32 + 0.5 - cy;
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq <= r_sq {
+                        let dist = dist_sq.sqrt();
+                        // Smooth falloff: gaussian-like (exp) or simple linear
+                        let t = 1.0 - (dist / radius);
+                        let alpha = (t * t * 0.9).max(0.0); // emphasize center
+
+                        let idx = py * w + px;
+                        accum[idx][0] += pr * alpha;
+                        accum[idx][1] += pg * alpha;
+                        accum[idx][2] += pb * alpha;
+                        // We accumulate alpha too for blending decisions
+                        accum[idx][3] = (accum[idx][3] + alpha).min(10.0);
+                    }
+                }
+            }
+        }
+
+        // Convert accum buffer to RGBA8
+        let mut rgba_data = Vec::with_capacity(w * h * PIXEL_BYTES);
+        for px in 0..(w * h) {
+            // approximate final alpha
+            let ar = accum[px][3].clamp(0.0, 1.0);
+            let r = (accum[px][0] * 255.0).min(255.0) as u8;
+            let g = (accum[px][1] * 255.0).min(255.0) as u8;
+            let b = (accum[px][2] * 255.0).min(255.0) as u8;
+            let a = (ar * 255.0).min(255.0) as u8;
+
+            // If alpha is tiny, keep solid background tone
+            if a == 0 {
+                rgba_data.extend_from_slice(&[5u8, 5u8, 12u8, 255u8]);
+            } else {
+                rgba_data.extend_from_slice(&[r, g, b, a]);
+            }
+        }
+
+        rgba_data
+    }
+
+    fn simulate_and_render(&mut self) -> Vec<u8> {
+        // Update delta time
+        let dt = self.last_update.elapsed().as_secs_f32();
+        self.last_update = Instant::now();
+
+        // Update particle physics
+        self.update_particles(dt);
+
+        // Render to RGBA buffer
+        self.render_particles()
+    }
+
+    async fn send_frame(&mut self, stream: &mut ServerStream) -> Result<()> {
+        let rgba_data = self.simulate_and_render();
+
+        // Compress the data with Zstd
+        use std::io::Write;
+        // Reuse the compression buffer across frames to reduce allocations.
+        let mut out_buf = std::mem::take(&mut self.compress_buf);
+        out_buf.clear();
+        let mut encoder = libgsh::zstd::stream::Encoder::new(out_buf, ZSTD_COMPRESSION_LEVEL)?;
+        encoder.write_all(&rgba_data)?;
+        let compressed = encoder.finish()?;
+        let compressed_len = compressed.len();
+        let uncompressed_len = rgba_data.len();
+        // Save compressed buffer for reuse (its capacity will be reused next frame).
+        self.compress_buf = compressed;
+
+        log::debug!(
+            "Frame: {}x{}, uncompressed: {} bytes, compressed: {} bytes ({:.1}% compression)",
+            self.width,
+            self.height,
+            uncompressed_len,
+            compressed_len,
+            (compressed_len as f32 / uncompressed_len as f32) * 100.0
+        );
+
+        stream
+            .send(Frame {
+                window_id: WINDOW_ID,
+                segments: full_frame_segment(&self.compress_buf, self.width, self.height),
+                width: self.width as u32,
+                height: self.height as u32,
+            })
+            .await?;
+
+        // Flush once per-frame so we don't flush per-message.
+        stream.flush().await?;
+
+        Ok(())
+    }
+
+    fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        // Reinitialize particles for new dimensions
+        self.particles = Self::init_particles(self.particles.len(), width, height);
+    }
+}
+
+#[async_trait]
+impl GshService for LiquidSimService {
+    async fn main(self, stream: ServerStream) -> Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
+    }
+
+    fn server_hello(&self) -> ServerHelloAck {
+        ServerHelloAck {
+            format: FrameFormat::Rgba.into(),
+            compression: Some(Compression::Zstd(ZstdCompression {
+                level: ZSTD_COMPRESSION_LEVEL,
+            })),
+            windows: vec![WindowSettings {
+                window_id: WINDOW_ID,
+                monitor_id: None,
+                title: "Liquid Simulation".into(),
+                initial_mode: window_settings::WindowMode::Windowed.into(),
+                width: INITIAL_WIDTH as u32,
+                height: INITIAL_HEIGHT as u32,
+                always_on_top: false,
+                allow_resize: true,
+                resize_frame: true,
+                frame_anchor: window_settings::WindowAnchor::Center.into(),
+            }],
+            auth_method: None,
+        }
+    }
+}
+
+#[async_trait]
+impl GshServiceExt for LiquidSimService {
+    const MAX_FPS: u32 = MAX_FPS;
+
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
+        log::info!("Starting liquid simulation...");
+        self.send_frame(stream).await
+    }
+
+    async fn on_tick(&mut self, stream: &mut ServerStream) -> Result<()> {
+        self.send_frame(stream).await
+    }
+
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
+        if let ClientEvent::UserInput(input) = &event {
+            // Handle mouse events
+            if let Some(InputEvent::MouseEvent(mouse_event)) = input.input_event.as_ref() {
+                match MouseAction::try_from(mouse_event.action).unwrap() {
+                    MouseAction::Move if input.window_id == WINDOW_ID => {
+                        // Update mouse position tracking
+                        self.prev_mouse_pos = self.mouse_pos;
+                        self.mouse_pos =
+                            Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
+                        log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
+                    }
+                    MouseAction::Exit => {
+                        // Mouse exited the window
+                        self.prev_mouse_pos = self.mouse_pos;
+                        self.mouse_pos = None;
+                        log::trace!("Mouse exited window {}", input.window_id);
+                    }
+                    other => {
+                        log::warn!("Unhandled mouse action: {:?}", other);
+                    }
+                }
+            }
+
+            // Handle window events
+            if let Some(InputEvent::WindowEvent(window_event)) = input.input_event.as_ref() {
+                match WindowAction::try_from(window_event.action).unwrap() {
+                    WindowAction::Resize => {
+                        if input.window_id == WINDOW_ID {
+                            let new_width = window_event.width as usize;
+                            let new_height = window_event.height as usize;
+                            log::info!("Resizing to {}x{}", new_width, new_height);
+                            self.resize(new_width, new_height);
+                            self.send_frame(stream).await?;
+                        }
+                    }
+                    WindowAction::Close => {
+                        return Err(ServiceError::AnyError("Window closed".into()));
+                    }
+                    other => {
+                        log::warn!("Unhandled window action: {:?}", other);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}

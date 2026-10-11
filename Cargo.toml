@@ -1,16 +1,8 @@
 [workspace]
 resolver = "2"
-members = [
-	"libgsh",
-	"client",
-	"examples/colors",
-	"examples/cube",
-	"examples/password_auth",
-	"examples/signature_auth",
-	"examples/remote_desktop",
-	"benches",
-]
+members = ["libgsh", "client", "examples/*", "benches"]
 
 [workspace.dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+libgsh = { path = "libgsh" }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio-test = "0.4"

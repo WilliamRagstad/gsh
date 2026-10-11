@@ -1,26 +1,24 @@
 use env_logger::Env;
 use libgsh::{
-    cert,
-    frame::optimize_segments,
+    async_trait::async_trait,
+    server::{GshServer, GshService, GshServiceExt, ServerStream},
     shared::{
+        cert,
+        frame::optimize_segments,
+        frame::PrevFrame,
         protocol::{
+            client_message::ClientEvent,
             server_hello_ack::{window_settings, FrameFormat, WindowSettings},
             Frame, ServerHelloAck,
         },
-        ClientEvent,
     },
-    simple::{
-        server::SimpleServer,
-        service::{SimpleService, SimpleServiceExt},
-        Messages,
-    },
-    tokio_rustls::rustls::ServerConfig,
-    Result,
+    tokio, Result, ServerConfig,
 };
 use log::trace;
 use rand::random;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -32,8 +30,8 @@ fn main() {
         .with_no_client_auth()
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
-    let server: SimpleServer<ColorService> = SimpleServer::new(ColorService::default(), config);
-    server.serve().unwrap();
+    let server: GshServer<ColorService> = GshServer::new(ColorService::default(), config);
+    server.serve().await.unwrap();
 }
 
 const FRAME_WIDTH: usize = 250;
@@ -44,34 +42,66 @@ const WINDOW_SECONDARY: u32 = 1;
 
 type Color = (u8, u8, u8);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ColorService {
     color: Color,
-    prev_frame: Vec<u8>,
+    prev_frame: PrevFrame,
+    cur_frame: Vec<u8>,
+}
+
+impl Default for ColorService {
+    fn default() -> Self {
+        let size = FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES;
+        Self {
+            color: (0, 0, 0),
+            prev_frame: PrevFrame::with_capacity(size),
+            cur_frame: Vec::with_capacity(size),
+        }
+    }
 }
 
 impl ColorService {
-    fn send_frame(&mut self, messages: &mut Messages, window_id: u32, color: Color) -> Result<()> {
-        let mut frame = [0; FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES];
-        for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
-            frame[i * PIXEL_BYTES] = color.0; // Red
-            frame[i * PIXEL_BYTES + 1] = color.1; // Green
-            frame[i * PIXEL_BYTES + 2] = color.2; // Blue
-            frame[i * PIXEL_BYTES + 3] = 255;
+    async fn send_frame(
+        &mut self,
+        stream: &mut ServerStream,
+        window_id: u32,
+        color: Color,
+    ) -> Result<()> {
+        let size = FRAME_WIDTH * FRAME_HEIGHT * PIXEL_BYTES;
+        if self.cur_frame.len() != size {
+            self.cur_frame.resize(size, 0);
         }
-        messages.write_message(Frame {
-            window_id,
-            // data: frame.to_vec(),
-            segments: optimize_segments(
-                &frame,
-                FRAME_WIDTH,
-                FRAME_HEIGHT,
-                &mut self.prev_frame,
-                PIXEL_BYTES,
-            ),
-            width: FRAME_WIDTH as u32,
-            height: FRAME_HEIGHT as u32,
-        })?;
+        for i in 0..(FRAME_WIDTH * FRAME_HEIGHT) {
+            self.cur_frame[i * PIXEL_BYTES] = color.0; // Red
+            self.cur_frame[i * PIXEL_BYTES + 1] = color.1; // Green
+            self.cur_frame[i * PIXEL_BYTES + 2] = color.2; // Blue
+            self.cur_frame[i * PIXEL_BYTES + 3] = 255;
+        }
+        stream
+            .send(Frame {
+                window_id,
+                // data: frame.to_vec(),
+                segments: optimize_segments(
+                    &self.cur_frame,
+                    FRAME_WIDTH,
+                    FRAME_HEIGHT,
+                    &self.prev_frame,
+                    PIXEL_BYTES,
+                ),
+                width: FRAME_WIDTH as u32,
+                height: FRAME_HEIGHT as u32,
+            })
+            .await?;
+
+        // Flush once per-frame to ensure the data is sent without flushing per-message.
+        stream.flush().await?;
+
+        // Rotate ping-pong buffers: move cur_frame into prev_frame storage and
+        // reuse the old prev_frame buffer as the next cur_frame to avoid copies.
+        let new_frame = self
+            .prev_frame
+            .update_with_frame(std::mem::take(&mut self.cur_frame));
+        self.cur_frame = new_frame;
         Ok(())
     }
 
@@ -82,17 +112,19 @@ impl ColorService {
         (r, g, b)
     }
 
-    fn swap_colors(&mut self, messages: &mut Messages) -> Result<()> {
-        self.send_frame(messages, WINDOW_SECONDARY, self.color)?;
+    async fn swap_colors(&mut self, stream: &mut ServerStream) -> Result<()> {
+        self.send_frame(stream, WINDOW_SECONDARY, self.color)
+            .await?;
         self.color = Self::random_color();
-        self.send_frame(messages, WINDOW_PRIMARY, self.color)?;
+        self.send_frame(stream, WINDOW_PRIMARY, self.color).await?;
         Ok(())
     }
 }
 
-impl SimpleService for ColorService {
-    fn main(self, messages: Messages) -> libgsh::Result<()> {
-        <Self as SimpleServiceExt>::main(self, messages)
+#[async_trait]
+impl GshService for ColorService {
+    async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
+        <Self as GshServiceExt>::main(self, stream).await
     }
 
     fn server_hello(&self) -> ServerHelloAck {
@@ -130,17 +162,18 @@ impl SimpleService for ColorService {
     }
 }
 
-// The `SimpleServiceExt` trait provides a default event loop implementation,
+// The `GshServiceExt` trait provides a default event loop implementation,
 // we only need to implement the `events`, `tick` and `handle_event` methods.
-impl SimpleServiceExt for ColorService {
-    fn on_startup(&mut self, messages: &mut Messages) -> Result<()> {
-        self.swap_colors(messages)
+#[async_trait]
+impl GshServiceExt for ColorService {
+    async fn on_startup(&mut self, stream: &mut ServerStream) -> Result<()> {
+        self.swap_colors(stream).await
     }
 
-    fn on_event(&mut self, messages: &mut Messages, event: ClientEvent) -> Result<()> {
+    async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         if let ClientEvent::UserInput(input) = event {
             trace!("UserInput: {:?}", input);
-            self.swap_colors(messages)?;
+            self.swap_colors(stream).await?;
         }
         Ok(())
     }

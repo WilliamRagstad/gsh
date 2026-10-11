@@ -1,4 +1,65 @@
 use crate::shared::protocol::frame::Segment;
+use std::mem;
+
+/// A ping-pong previous-frame buffer to avoid full-frame copies between frames.
+///
+/// Usage pattern:
+/// - Service/example keeps a `cur_frame: Vec<u8>` that it fills each tick.
+/// - Call `optimize_segments(&cur_frame, ..., &prev_frame, pixel_bytes)` to compute diffs
+///   against the current previous-frame buffer.
+/// - After sending the frame, call `cur_frame = prev_frame.update_with_frame(cur_frame)`
+///   which moves ownership of `cur_frame` into the prev-frame storage and returns the
+///   old previous-frame Vec for reuse as the next `cur_frame`. This avoids copying the
+///   entire frame buffer every tick.
+#[derive(Debug, Clone)]
+pub struct PrevFrame {
+    buf0: Vec<u8>,
+    buf1: Vec<u8>,
+    cur: usize,
+}
+
+impl PrevFrame {
+    pub fn new() -> Self {
+        Self {
+            buf0: Vec::new(),
+            buf1: Vec::new(),
+            cur: 0,
+        }
+    }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            buf0: Vec::with_capacity(cap),
+            buf1: Vec::with_capacity(cap),
+            cur: 0,
+        }
+    }
+
+    /// Returns a slice to the current previous frame.
+    pub fn current(&self) -> &[u8] {
+        if self.cur == 0 {
+            &self.buf0
+        } else {
+            &self.buf1
+        }
+    }
+
+    /// Update the ping-pong buffers by taking ownership of `new_frame`.
+    /// Returns the old buffer (the one that becomes the new current frame to be filled).
+    /// This avoids allocating/copying a fresh Vec every tick.
+    pub fn update_with_frame(&mut self, new_frame: Vec<u8>) -> Vec<u8> {
+        if self.cur == 0 {
+            // buf1 becomes current; put new_frame into buf0 and return old buf1
+            let old = mem::replace(&mut self.buf1, new_frame);
+            self.cur = 1;
+            old
+        } else {
+            let old = mem::replace(&mut self.buf0, new_frame);
+            self.cur = 0;
+            old
+        }
+    }
+}
 
 pub fn full_frame_segment(
     full_frame_data: &[u8],
@@ -20,7 +81,7 @@ pub fn optimize_segments(
     full_frame_data: &[u8],
     frame_width: usize,
     frame_height: usize,
-    prev_frame: &mut Vec<u8>,
+    prev_frame: &PrevFrame,
     pixel_bytes: usize,
 ) -> Vec<Segment> {
     const MIN_SEGMENT_ROWS: usize = 4; // Minimum segment size in rows
@@ -32,8 +93,8 @@ pub fn optimize_segments(
     for y in 0..frame_height {
         let start = y * frame_width * pixel_bytes;
         let end = start + frame_width * pixel_bytes;
-        if let Some(prev_frame) = prev_frame.get(start..end) {
-            if *prev_frame != full_frame_data[start..end] {
+        if let Some(prev_row) = prev_frame.current().get(start..end) {
+            if *prev_row != full_frame_data[start..end] {
                 let segment_data = full_frame_data[start..end].to_vec();
                 if let Some(ref mut segment) = current_segment {
                     // Extend the current segment if it's contiguous
@@ -113,9 +174,9 @@ pub fn optimize_segments(
         optimized_segments.push(segment);
     }
 
-    // Update the previous frame with the new data
-    prev_frame.resize(full_frame_data.len(), 0);
-    prev_frame.copy_from_slice(full_frame_data);
+    // Note: we do not mutate or copy into the previous-frame buffer here.
+    // The caller should call `PrevFrame::update_with_frame(cur_frame_vec)` after
+    // sending the frame to rotate buffers and avoid an O(N) copy.
 
     optimized_segments
 }
@@ -128,7 +189,7 @@ mod tests {
     fn test_full_frame_segment() {
         let data = vec![255u8; 100 * 100 * 4]; // 100x100 RGBA
         let segments = full_frame_segment(&data, 100, 100);
-        
+
         assert_eq!(segments.len(), 1);
         let segment = &segments[0];
         assert_eq!(segment.x, 0);
@@ -144,10 +205,11 @@ mod tests {
         let height = 10;
         let pixel_bytes = 4;
         let data = vec![128u8; width * height * pixel_bytes];
-        let mut prev_frame = data.clone();
-        
-        let segments = optimize_segments(&data, width, height, &mut prev_frame, pixel_bytes);
-        
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(data.clone());
+
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
+
         // Identical frames should produce no segments
         assert_eq!(segments.len(), 0);
     }
@@ -158,16 +220,17 @@ mod tests {
         let height = 10;
         let pixel_bytes = 4;
         let mut data = vec![128u8; width * height * pixel_bytes];
-        let mut prev_frame = vec![128u8; width * height * pixel_bytes];
-        
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(vec![128u8; width * height * pixel_bytes]);
+
         // Change one row
         for i in 0..width * pixel_bytes {
             data[5 * width * pixel_bytes + i] = 255;
         }
-        
-        let segments = optimize_segments(&data, width, height, &mut prev_frame, pixel_bytes);
-        
-        // Should not produce segments for single row changes (below MIN_SEGMENT_ROWS)
+
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
+
+        // A single changed row still needs to be transmitted
         assert_eq!(segments.len(), 1);
     }
 
@@ -177,11 +240,11 @@ mod tests {
         let height = 10;
         let pixel_bytes = 4;
         let data = vec![128u8; width * height * pixel_bytes];
-        let prev_frame = vec![255u8; width * height * pixel_bytes]; // Different color
-        let mut prev_frame_mut = prev_frame;
-        
-        let segments = optimize_segments(&data, width, height, &mut prev_frame_mut, pixel_bytes);
-        
+        let mut prev_frame = PrevFrame::new();
+        prev_frame.update_with_frame(vec![255u8; width * height * pixel_bytes]); // Different color
+
+        let segments = optimize_segments(&data, width, height, &prev_frame, pixel_bytes);
+
         // Completely different frames should produce segments
         assert!(segments.len() > 0);
     }
@@ -192,18 +255,18 @@ mod tests {
         let height = 5;
         let pixel_bytes = 4;
         let mut data = vec![0u8; width * height * pixel_bytes];
-        
+
         // Create a gradient pattern
         for y in 0..height {
             for x in 0..width {
                 let idx = (y * width + x) * pixel_bytes;
-                data[idx] = (x * 255 / width) as u8;     // R
+                data[idx] = (x * 255 / width) as u8; // R
                 data[idx + 1] = (y * 255 / height) as u8; // G
-                data[idx + 2] = 128;                       // B
-                data[idx + 3] = 255;                       // A
+                data[idx + 2] = 128; // B
+                data[idx + 3] = 255; // A
             }
         }
-        
+
         let segments = full_frame_segment(&data, width, height);
         assert_eq!(segments[0].data, data);
     }
