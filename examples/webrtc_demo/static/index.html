@@ -12,7 +12,7 @@
 </head>
 <body>
   <h1>GSH WebRTC demo</h1>
-  <p>Local-only test client. Click the video and move the pointer to send input.</p>
+  <p>Local-only interactive test scene. Click the video and move the pointer; keyboard, pointer, and scroll input update the server-rendered scene.</p>
   <video id="video" autoplay playsinline controls muted></video>
   <pre id="status">Connecting…</pre>
   <script>
@@ -135,9 +135,12 @@
     });
     surface.addEventListener('pointermove', event => {
       if (document.pointerLockElement === surface) {
-        totalDx += event.movementX;
-        totalDy += event.movementY;
-        sendRealtime({ t: 'relative_motion', dx_total: totalDx, dy_total: totalDy });
+        const bounds = surface.getBoundingClientRect();
+        const logicalWidth = surface.videoWidth || 320;
+        const logicalHeight = surface.videoHeight || 240;
+        totalDx += event.movementX * logicalWidth / Math.max(1, bounds.width);
+        totalDy += event.movementY * logicalHeight / Math.max(1, bounds.height);
+        sendRealtime({ t: 'relative_motion', dx_total: Math.round(totalDx), dy_total: Math.round(totalDy) });
       } else {
         sendRealtime({ t: 'pointer', ...position(event) });
       }

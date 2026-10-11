@@ -1716,6 +1716,26 @@ mod tests {
                 .expect("video track closed");
             assert_eq!((decoded.width, decoded.height), (320, 240));
             assert_eq!(decoded.bgra.len(), 320 * 240 * 4);
+
+            for frame_number in 1..=10 {
+                tokio::time::sleep(Duration::from_millis(34)).await;
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+                loop {
+                    match offerer.send_raw_video(&bgra) {
+                        Ok(()) => break,
+                        Err(SessionError::VideoBackpressure) => {
+                            assert!(tokio::time::Instant::now() < deadline);
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                        }
+                        Err(error) => panic!("raw video frame {frame_number} failed: {error}"),
+                    }
+                }
+                let decoded = tokio::time::timeout(Duration::from_secs(2), answerer.recv_video())
+                    .await
+                    .expect("paced software-decoded frame timed out")
+                    .expect("video track closed");
+                assert_eq!((decoded.width, decoded.height), (320, 240));
+            }
         });
     }
 }
