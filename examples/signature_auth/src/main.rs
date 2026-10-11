@@ -35,7 +35,6 @@ async fn main() {
 
 #[derive(Debug, Clone, Default)]
 pub struct AuthService {
-    // Any custom data you need for verification can be added here.
     authorized_keys: Vec<RsaPublicKey>,
 }
 
@@ -71,7 +70,6 @@ impl GshService for AuthService {
 impl GshServiceExt for AuthService {}
 
 struct MySignatureVerifier {
-    // Any custom data you need for verification can be added here.
     authorized_keys: Vec<RsaPublicKey>,
 }
 
@@ -83,7 +81,6 @@ impl MySignatureVerifier {
 
 impl SignatureVerifier for MySignatureVerifier {
     fn verify(&self, public_key: &RsaPublicKey) -> bool {
-        // Check if the public key is in the list of authorized keys.
         self.authorized_keys.iter().any(|key| *key == *public_key)
     }
 }

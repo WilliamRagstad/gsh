@@ -39,7 +39,6 @@ impl AuthProvider for ClientAuthProvider {
                 return password.clone();
             }
         }
-        // Prompt for password if not stored
         let password = Password::new()
             .with_prompt("Enter password")
             .interact()
@@ -57,8 +56,6 @@ impl AuthProvider for ClientAuthProvider {
             log::warn!("No previous host or password found.");
             return;
         };
-        // As if the user wants to store the password, we should not call this function.
-        // Store password in known hosts if user wants to
         let confirmation = Confirm::new()
             .with_prompt("Do you want to store this password in the known hosts?")
             .default(false)
@@ -68,7 +65,6 @@ impl AuthProvider for ClientAuthProvider {
             if let Some(known_host) = self.known_hosts.find_host_mut(&previous_host) {
                 known_host.password = Some(previous_password);
             } else {
-                // Add new host if it doesn't exist
                 self.known_hosts.add_host(
                     previous_host.to_string(),
                     vec![],
@@ -81,7 +77,6 @@ impl AuthProvider for ClientAuthProvider {
     }
 
     fn signature(&mut self, host: &str, sign_message: &[u8]) -> Option<(Signature, RsaPublicKey)> {
-        // Check if an ID file is provided as an override
         if let Some(id_override) = &self.id_override {
             if let Some((private_key, public_key)) = self.id_files.read_id_file(id_override) {
                 self.previous_host = Some(host.to_string());
@@ -91,10 +86,8 @@ impl AuthProvider for ClientAuthProvider {
                 log::warn!("ID {} not found.", id_override);
             }
         }
-        // Check if the host is already known and has a signature stored
         if let Some(known_host) = self.known_hosts.find_host(host) {
             if let Some(id) = known_host.id_file_ref() {
-                // Lookup signature in ID file
                 if let Some((private_key, public_key)) = self.id_files.read_id_file(id) {
                     self.previous_host = Some(host.to_string());
                     self.previous_id = Some(id.clone());
@@ -104,7 +97,6 @@ impl AuthProvider for ClientAuthProvider {
                 }
             }
         }
-        // Select a signature file from the list of ID files
         let id_file_names = self.id_files.names();
         if id_file_names.is_empty() {
             log::error!("No IDs found. Please create one first.");
@@ -131,7 +123,6 @@ impl AuthProvider for ClientAuthProvider {
             log::warn!("No previous host or ID file found.");
             return;
         };
-        // Store ID file in known hosts if user wants to
         let confirmation = Confirm::new()
             .with_prompt("Do you want to store this ID in the known hosts?")
             .default(false)
@@ -141,7 +132,6 @@ impl AuthProvider for ClientAuthProvider {
             if let Some(known_host) = self.known_hosts.find_host_mut(&previous_host) {
                 known_host.set_id_file_ref(previous_id.clone());
             } else {
-                // Add new host if it doesn't exist
                 self.known_hosts.add_host(
                     previous_host.to_string(),
                     vec![],

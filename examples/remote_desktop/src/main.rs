@@ -48,7 +48,6 @@ async fn main() {
         .with_single_cert(vec![key.cert.der().clone()], private_key)
         .unwrap();
 
-    // Setup recorder
     let monitor = Monitor::all()
         .unwrap()
         .into_iter()
@@ -66,7 +65,6 @@ async fn main() {
     let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
     let recorder = Arc::new(Mutex::new(video_stream));
 
-    // Start service
     let server = GshServer::new(RdpService::new(recorder), config);
     server.serve().await.unwrap();
 }
@@ -171,8 +169,6 @@ impl RdpService {
                 &compressed,
                 frame.width as usize,
                 frame.height as usize,
-                // &mut self.previous_frame,
-                // 4,
             ),
         })
     }

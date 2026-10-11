@@ -34,9 +34,7 @@ jobs:
           run: cargo test --workspace --verbose
         - name: Run benchmarks
           run: |
-            # Run libgsh internal benchmarks (quick mode for CI)
             cargo bench -p libgsh --bench libgsh_internals -- --quick
-            # Run main benchmark suite (quick mode for CI)
             cargo bench -p gsh-benchmarks --bench '*' -- --quick
         - name: Upload benchmark results
           uses: actions/upload-artifact@v4

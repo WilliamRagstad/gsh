@@ -45,7 +45,6 @@ impl BenchmarkServer {
     async fn send_frame(&mut self, messages: &mut ServerStream) -> Result<()> {
         self.frame_count += 1;
 
-        // Generate test frame data (gradient pattern for benchmarking)
         let mut frame_data = vec![0u8; self.width * self.height * 4]; // RGBA
         for y in 0..self.height {
             for x in 0..self.width {
@@ -110,7 +109,6 @@ impl GshServiceExt for BenchmarkServer {
     }
 
     async fn on_event(&mut self, _messages: &mut ServerStream, event: ClientEvent) -> Result<()> {
-        // Echo back any input for latency testing
         log::trace!("Received event: {:?}", event);
         Ok(())
     }

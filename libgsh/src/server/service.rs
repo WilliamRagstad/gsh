@@ -10,67 +10,52 @@ use async_trait::async_trait;
 use std::io::ErrorKind;
 use tokio::io::AsyncWriteExt;
 
-/// A trait for an async service that can be run in a separate thread.
-/// The service is responsible for handling client events and sending frames to the client.
+/// Per-client service that handles input and sends frames.
 #[async_trait]
 pub trait GshService: Clone + Send + Sync + 'static {
-    /// Initial window setting preferences for the service.\
-    /// This is used in the `handshake_server` function to set the initial window settings for the client.
-    /// This is optional and can be overridden by the service implementation.
-    /// If not provided, the client may use its own default settings.
+    /// Initial window settings, frame format, compression, and authentication method.
     fn server_hello(&self) -> ServerHelloAck;
 
-    /// Auth verifier for the service.\
-    /// This is used to verify the client authentication method.
+    /// Authentication verifier; `None` disables authentication.
     fn auth_verifier(&self) -> Option<AuthVerifier> {
         None
     }
 
-    /// Main event loop for the service.\
-    /// This is running in a separate thread, handling client events and sending frames back to the client.
+    /// Runs the per-client event loop.
     async fn main(self, stream: ServerStream) -> Result<()>
     where
         Self: Sized;
 }
 
-/// A trait extension for `AsyncService` that provides additional default functionality:
-/// - default `main` event loop implementation, which handles client events and calls `tick` and `handle_event` methods.
-/// - `events` method to access the event receiver.
-/// - `tick` method to perform periodic tasks.
-/// - `handle_event` method to handle client events.
+/// Default event loop with startup, periodic tick, input, and exit hooks.
 #[async_trait]
 pub trait GshServiceExt: GshService {
     const MAX_FPS: u32 = 60;
-    const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64; // in nanoseconds
-    /// Start up function for the service.\
-    /// This is called when the service is started and can be used to perform any necessary initialization.
+    const FRAME_TIME_NS: u64 = 1_000_000_000 / Self::MAX_FPS as u64;
+    /// Called once before the event loop starts.
     async fn on_startup(&mut self, _stream: &mut ServerStream) -> Result<()> {
         Ok(())
     }
 
-    /// Handle periodic tasks in the service.\
-    /// This is called each iteration in the default `main` implementation event loop to perform any necessary updates.
+    /// Called at the interval set by `FRAME_TIME_NS`.
     async fn on_tick(&mut self, _stream: &mut ServerStream) -> Result<()> {
         Ok(())
     }
 
-    /// Handle client events in the service.\
-    /// This is called for each `ClientEvent` received in the default `main` implementation event loop.
+    /// Handles a client event.
     #[allow(unused_variables)]
     async fn on_event(&mut self, stream: &mut ServerStream, event: ClientEvent) -> Result<()> {
         log::trace!("Got event: {:?}", event);
         Ok(())
     }
 
-    /// Graceful exit of the service.\
-    /// This is called when the service receives a `StatusUpdate` event with `Exit` status.
+    /// Called on client exit or disconnection.
     async fn on_exit(&mut self, _stream: &mut ServerStream) -> Result<()> {
         log::trace!("Exiting service...");
         Ok(())
     }
 
-    /// Main event loop for the service.\
-    /// This is running in a separate thread, handling client events and sending frames back to the client.
+    /// Runs startup, input/tick dispatch, and exit handling.
     async fn main(mut self, mut stream: ServerStream) -> Result<()>
     where
         Self: Sized,
@@ -78,7 +63,6 @@ pub trait GshServiceExt: GshService {
         self.on_startup(&mut stream).await?;
 
         log::trace!("Starting service main loop...");
-        // Use a tokio interval for precise pacing and natural yielding.
         let mut tick = tokio::time::interval(std::time::Duration::from_nanos(Self::FRAME_TIME_NS));
         'running: loop {
             tokio::select! {
@@ -114,7 +98,6 @@ pub trait GshServiceExt: GshService {
                                 break 'running;
                             }
                             ErrorKind::WouldBlock | ErrorKind::TimedOut => {
-                                // No data available yet, do nothing
                             }
                             _ => {
                                 log::error!("Error reading message: {}", err);
@@ -125,7 +108,6 @@ pub trait GshServiceExt: GshService {
                     }
                 }
                 _ = tick.tick() => {
-                    // Periodic tick; call on_tick which may render and send frames.
                     self.on_tick(&mut stream).await?;
                 }
             }

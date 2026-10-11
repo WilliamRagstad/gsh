@@ -5,7 +5,6 @@ use rsa::{
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, PrivateKeyDer};
 
-// Generate a self-signed certificate
 pub fn self_signed<T: AsRef<str>>(
     alt_names: &'_ [T],
 ) -> Result<(CertifiedKey, PrivateKeyDer<'_>), rcgen::Error> {
@@ -163,7 +162,6 @@ mod tests {
         let extracted_private = extract_private_key(&pem).unwrap();
         let extracted_public = extract_public_key(&pem).unwrap();
 
-        // Verify keys match
         assert_eq!(extracted_private.n(), original_private.n());
         assert_eq!(extracted_public.n(), original_public.n());
         assert_eq!(extracted_public.e(), original_public.e());

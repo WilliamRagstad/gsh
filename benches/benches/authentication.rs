@@ -98,17 +98,13 @@ fn bench_challenge_response(c: &mut Criterion) {
     let signing_key = SigningKey::<Sha256>::new(private_key);
     let verifying_key = VerifyingKey::<Sha256>::new(public_key);
 
-    // Simulate authentication challenge-response
     group.bench_function("auth_challenge_response", |b| {
         b.iter(|| {
-            // Generate challenge
             let challenge: [u8; 32] = rand::random();
 
-            // Sign challenge (client side)
             let mut rng = OsRng;
             let signature = signing_key.sign_with_rng(&mut rng, &challenge);
 
-            // Verify signature (server side)
             let result = verifying_key.verify(&challenge, &signature);
 
             black_box((challenge, signature, result))
@@ -121,20 +117,15 @@ fn bench_challenge_response(c: &mut Criterion) {
 fn bench_auth_session_setup(c: &mut Criterion) {
     c.bench_function("full_auth_session", |b| {
         b.iter(|| {
-            // Simulate full authentication session setup
 
-            // 1. Generate server challenge
             let challenge: [u8; 32] = rand::random();
 
-            // 2. Generate client keypair (first-time setup)
             let (private_key, public_key) = generate_rsa_keypair(2048);
 
-            // 3. Client signs challenge
             let signing_key = SigningKey::<Sha256>::new(private_key);
             let mut rng = OsRng;
             let signature = signing_key.sign_with_rng(&mut rng, &challenge);
 
-            // 4. Server verifies signature
             let verifying_key = VerifyingKey::<Sha256>::new(public_key);
             let verification_result = verifying_key.verify(&challenge, &signature);
 

@@ -47,7 +47,6 @@ fn bench_end_to_end_server_lifecycle(c: &mut Criterion) {
 
     c.bench_function("complete_server_setup", |b| {
         b.to_async(&rt).iter(|| async {
-            // Full server setup simulation
             let config = setup_server_config();
             let server = BenchmarkServer::new(640, 480);
             let hello = server.server_hello();
@@ -66,12 +65,10 @@ fn bench_high_frequency_frame_simulation(c: &mut Criterion) {
             let mut server = BenchmarkServer::new(300, 300);
             let mut frame_count = 0;
 
-            // Simulate 10 rapid frame generations (like in a 600fps scenario)
             for _ in 0..10 {
                 server.frame_count += 1;
                 frame_count += 1;
 
-                // Simulate frame data generation
                 let width = server.width;
                 let height = server.height;
                 let mut frame_data = vec![0u8; width * height * 4];

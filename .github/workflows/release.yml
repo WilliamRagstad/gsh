@@ -1,8 +1,7 @@
 name: Client Release
 
-# Needed so the release job can publish assets
 permissions:
-  contents: write     # allows creating & uploading releases
+  contents: write
 
 on:
   push:
@@ -26,9 +25,6 @@ jobs:
         toolchain: stable
         target: ${{ matrix.target }}
 
-    # ----------------------------------
-    # Install protoc everywhere (one step, cross-platform)
-    # ----------------------------------
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
       with:

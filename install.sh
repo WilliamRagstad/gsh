@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-#! Installs the latest gsh client binary on Linux.
-#! 1. Detects CPU architecture (x86 or x64)
-#! 2. Downloads the matching asset from the latest GitHub release
-#! 3. Installs it to ~/.local/share/gsh/bin and ensures that dir is on PATH
-#!
 #! Copyright (c) 2023 William Ragstad
 #! Licensed under the MIT License.
 

@@ -1,18 +1,7 @@
 # Community Creations
 
-This is a place for the community to share their custom creations built using [`libgsh`](./libgsh/), such as:
+Share a service built with [`libgsh`](libgsh/) by opening a pull request with its source, description, and connection instructions.
 
-- Personal pages
-- Online games for single players
-- Online games for multiple players
-- Graphical Bulletin Board Systems (BBS)
-- Graphical applications interfaces
-- Interactive experiences
-- *And much more!*
-
-Do you have a creation you want to share with the community?
-Please create a pull request with your creation and a short description of what it does and how to use it.
-
-| Title   | Description                 | Author          | Category   | Host      | Insecure | Source                                                                    |
-| ------- | --------------------------- | --------------- | ---------- | --------- | -------- | ------------------------------------------------------------------------- |
-| Colors! | Generate new random colors! | @WilliamRagstad | **Visual** | `?.?.?.?` | **Yes**  | [Github](https://github.com/WilliamRagstad/gsh/tree/main/examples/colors) |
+| Service | Description | Author | Source |
+| --- | --- | --- | --- |
+| Colors! | Interactive random colors | @WilliamRagstad | [Example](examples/colors/) |

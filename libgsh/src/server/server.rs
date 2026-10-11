@@ -6,18 +6,8 @@ use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 
 const DEFAULT_PORT: u16 = 1122;
 
-/// An async server that handles client connections and manages the application service implementing the `AsyncService` trait.
-/// The server listens for incoming connections and spawns a new tasks for each client connection.\
-///
-/// # Example: Self-Signed
-/// ```ignore
-/// let (key, private_key) = cert::self_signed(&["localhost"])?;
-/// let config = ServerConfig::builder()
-///     .with_no_client_auth()
-///     .with_single_cert(vec![key.cert.der().clone()], private_key)?;
-/// let server = AsyncServer::new(config);
-/// server.serve()?
-/// ```
+/// TLS server that clones a `GshService` into a task for each connection.
+/// See the repository examples for TLS configuration and service implementations.
 #[derive(Debug, Clone)]
 pub struct GshServer<ServiceT: GshService> {
     service: ServiceT,
@@ -28,20 +18,17 @@ impl<ServiceT: GshService> GshServer<ServiceT>
 where
     ServiceT: Send + Sync + 'static,
 {
-    /// Creates a new `GshServer` instance with the provided server configuration.\
-    /// The `ServerConfig` is used to configure the TLS settings for the server.
+    /// Creates a server with the service and TLS configuration.
     pub fn new(service: ServiceT, config: ServerConfig) -> Self {
         Self { service, config }
     }
 
-    /// Starts the server and listens for incoming connections on the default port (1122).\
-    /// This method blocks until the server is stopped or an error occurs.
+    /// Listens on port 1122 until an error occurs or the task is cancelled.
     pub async fn serve(self) -> Result<()> {
         self.serve_port(DEFAULT_PORT).await
     }
 
-    /// Starts the server and listens for incoming connections on the specified port.\
-    /// This method blocks until the server is stopped or an error occurs.
+    /// Listens on `port` until an error occurs or the task is cancelled.
     pub async fn serve_port(self, port: u16) -> Result<()> {
         let listener = TcpListener::bind(format!("[::]:{}", port)).await?;
         let tls_acceptor = TlsAcceptor::from(Arc::new(self.config.clone()));
@@ -70,8 +57,7 @@ where
         }
     }
 
-    /// Handles a client connection.\
-    /// This function performs the TLS handshake and starts the service's main event loop.\
+    /// Negotiates the protocol and runs the per-client service.
     async fn handle_client(
         service: ServiceT,
         mut stream: ServerStream,
