@@ -1,5 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use libgsh::{shared::frame::full_frame_segment, zstd};
+use libgsh::{
+    shared::frame::full_frame_segment,
+    telemetry::{PipelineTelemetry, Stage},
+    zstd,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -101,10 +105,28 @@ fn bench_frame_processing_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_stage_instrumentation(c: &mut Criterion) {
+    let disabled = PipelineTelemetry::default();
+    let enabled = PipelineTelemetry::new(true);
+    c.bench_function("pipeline_stage_timer/disabled", |b| {
+        b.iter(|| {
+            let _timer = disabled.time(Stage::Encode);
+            black_box(())
+        })
+    });
+    c.bench_function("pipeline_stage_timer/enabled", |b| {
+        b.iter(|| {
+            let _timer = enabled.time(Stage::Encode);
+            black_box(())
+        })
+    });
+}
+
 criterion_group!(
     frame_benches,
     bench_frame_compression,
     bench_frame_segmentation,
-    bench_frame_processing_pipeline
+    bench_frame_processing_pipeline,
+    bench_stage_instrumentation
 );
 criterion_main!(frame_benches);
