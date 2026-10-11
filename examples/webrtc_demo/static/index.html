@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GSH WebRTC loopback demo</title>
+  <style>
+    body { font: 16px system-ui; margin: 2rem auto; max-width: 900px; padding: 0 1rem; }
+    video { background: #111; max-width: 100%; width: 640px; aspect-ratio: 4 / 3; }
+    #status { font-family: monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>GSH WebRTC demo</h1>
+  <p>Local-only test client. Click the video and move the pointer to send input.</p>
+  <video id="video" autoplay playsinline controls></video>
+  <pre id="status">Connecting…</pre>
+  <script>
+    const status = document.querySelector('#status');
+    const video = document.querySelector('#video');
+    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const signaling = new WebSocket(`${scheme}//${location.host}/signal`);
+    let peer;
+    let inputChannel;
+    let remoteDescriptionSet = false;
+    const pendingCandidates = [];
+
+    function writeVarint(out, value) {
+      value >>>= 0;
+      while (value > 0x7f) {
+        out.push((value & 0x7f) | 0x80);
+        value >>>= 7;
+      }
+      out.push(value);
+    }
+
+    function sendMouseMove(x, y) {
+      if (!inputChannel || inputChannel.readyState !== 'open') return;
+      const mouse = [0x08, 0x00, 0x18]; // action=MOVE, field x
+      writeVarint(mouse, Math.max(0, x));
+      mouse.push(0x20); // field y
+      writeVarint(mouse, Math.max(0, y));
+      const message = [0x08, 0x01, 0x22]; // kind=MOUSE_EVENT, mouse_event oneof
+      writeVarint(message, mouse.length);
+      message.push(...mouse);
+      inputChannel.send(new Uint8Array(message));
+    }
+
+    signaling.onopen = () => { status.textContent = 'Waiting for server offer…'; };
+    signaling.onmessage = async ({ data }) => {
+      const message = JSON.parse(data);
+      if (message.type === 'offer') {
+        peer = new RTCPeerConnection({ iceServers: [] });
+        peer.ontrack = event => {
+          if (event.streams[0]) video.srcObject = event.streams[0];
+        };
+        peer.ondatachannel = event => {
+          if (event.channel.label === 'gsh-input-v1') inputChannel = event.channel;
+        };
+        peer.onicecandidate = event => {
+          if (event.candidate && signaling.readyState === WebSocket.OPEN) {
+            signaling.send(JSON.stringify({ type: 'candidate', candidate: event.candidate.toJSON() }));
+          }
+        };
+        await peer.setRemoteDescription({ type: 'offer', sdp: message.sdp });
+        remoteDescriptionSet = true;
+        for (const candidate of pendingCandidates.splice(0)) await peer.addIceCandidate(candidate);
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        signaling.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+        status.textContent = 'Answer sent; connecting media…';
+      } else if (message.type === 'candidate') {
+        const candidate = message.candidate;
+        if (peer && remoteDescriptionSet) await peer.addIceCandidate(candidate);
+        else pendingCandidates.push(candidate);
+      } else if (message.type === 'status') {
+        status.textContent = message.message;
+      }
+    };
+    signaling.onclose = () => { status.textContent = 'Signaling closed'; };
+    signaling.onerror = () => { status.textContent = 'Signaling error; check server log'; };
+
+    video.addEventListener('pointermove', event => {
+      const bounds = video.getBoundingClientRect();
+      const scaleX = 320 / bounds.width;
+      const scaleY = 240 / bounds.height;
+      sendMouseMove(Math.round((event.clientX - bounds.left) * scaleX),
+                    Math.round((event.clientY - bounds.top) * scaleY));
+    });
+  </script>
+</body>
+</html>

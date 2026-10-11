@@ -31,7 +31,18 @@ These characterize isolated CPU compression only, on a host whose CPU model was 
 1. Record `rustc -Vv`, `cargo -V`, `uname -a`, CPU/GPU/driver, SDL/PipeWire versions, and network topology.
 2. The blocker was resolved by upgrading the remote-desktop example to `xcap 0.9.8` (PipeWire/libspa 0.10.1); do not patch registry sources.
 3. Run `cargo bench -p gsh-benchmarks --bench frame_processing -- --sample-size 30` (or use a longer timeout) and preserve Criterion output.
-4. The feature-gated WebRTC input loopback now validates SDP/ICE/data-channel behavior. Add media loopback and server/client presentation before reporting frame-to-display or input-to-photon percentiles. Cross-host measurements require synchronized clocks or a one-way latency method with uncertainty.
+4. Feature-gated WebRTC loopback now validates SDP/ICE, input, VP8 RTP and software decode. Wire the session into runnable server/client applications and display/audio-device presentation before reporting frame-to-display or input-to-photon percentiles. Cross-host measurements require synchronized clocks or a one-way latency method with uncertainty.
+
+Command: `cargo bench -p gsh-benchmarks --features webrtc --bench webrtc_loopback -- --sample-size 20`
+
+Executed 2026-10-11 on the host above. This was a single-process, same-host ICE/WebRTC peer loopback after SDP/ICE connection setup. It excludes capture, signaling setup, browser, network impairment, display, and photons. Criterion's 20-sample time estimates (not p50/p95 percentiles):
+
+| Workload | Criterion time estimate |
+|---|---:|
+| Reliable input protobuf send → remote `recv_input` | 12.497–12.777 µs |
+| 320x240 VP8 keyframe push → remote software decode and BGRA callback | 11.761–11.794 ms |
+
+The input estimate includes channel send/receive and application callback dispatch. The video estimate includes a repeated 160-byte deterministic VP8 keyframe, pre-encoded track submission, RTP path and software decode to CPU BGRA; it does not represent capture/encode, GPU presentation, output device scheduling, or end-to-end application latency. Ten-sample runs varied more across repeats; the 20-sample result is reported here, but CPU/GPU model and load still need recording before using the values comparatively.
 
 ## Results
 
@@ -51,5 +62,6 @@ Instrumentation overhead microbenchmark (same host, release Criterion, 30 sample
 | Current `cargo build --workspace` | Passed after upgrading `xcap` 0.5.2 → 0.9.8 (PipeWire/libspa 0.10.1) |
 | Current `cargo test --workspace` | Passed; workspace includes 19 default `libgsh` tests; feature-gated WebRTC tests run separately |
 | Current `cargo test -p libgsh --features webrtc --lib` | 21 passed, including H.264/VP8 SDP parsing and local two-peer ICE/data-channel/VP8 packetizer flow |
+| Same-host WebRTC loopback benchmark | Input dispatch 12.497–12.777 µs; VP8 packetize → software decode 11.761–11.794 ms (Criterion estimates, 20 samples; workload limitations above) |
 
 This report is deliberately explicit about unverified items. Update it with host metadata and comparable measurements at each verified milestone.

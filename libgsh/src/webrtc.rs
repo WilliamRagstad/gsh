@@ -9,17 +9,18 @@ use crate::telemetry::{PipelineTelemetry, Stage};
 use prost::Message;
 use reactor_webrtc::{
     AudioTrack, DataChannel, EncodedVideoFrame as RtcEncodedVideoFrame, EncodedVideoTrack,
-    FrameAction, FrameDirection, FrameTransform, IceCandidate, LocalVideoTrack, MediaKind,
-    PeerConnection, PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState,
-    PreEncodedOptions, RtcConfiguration, SdpType, SessionDescription, TrackVideoEncoder,
-    TransceiverDirection, VideoCodec as RtcVideoCodec, VideoTrackOptions,
+    EncoderFeedback as RtcEncoderFeedback, FrameAction, FrameDirection, FrameTransform,
+    IceCandidate, LocalVideoTrack, MediaKind, PeerConnection, PeerConnectionFactory,
+    PeerConnectionObserver, PeerConnectionState, PreEncodedOptions, RemoteTrack, RtcConfiguration,
+    SdpType, SessionDescription, TrackVideoEncoder, TransceiverDirection,
+    VideoCodec as RtcVideoCodec, VideoTrackOptions,
 };
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 const INPUT_CHANNEL: &str = "gsh-input-v1";
 const CONTROL_CHANNEL: &str = "gsh-control-v1";
@@ -29,9 +30,15 @@ const ICE_QUEUE_CAPACITY: usize = 256;
 const MAX_CONTROL_MESSAGE: usize = 64 * 1024;
 const MAX_INPUT_MESSAGE: usize = 4096;
 const MAX_VIDEO_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_DECODED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 const MAX_INPUT_BUFFERED: u64 = 64 * 1024;
 const MAX_FRAME_DIMENSION: u32 = 8192;
+const MAX_SDP_BYTES: usize = 1024 * 1024;
+const MAX_ICE_CANDIDATE_BYTES: usize = 4096;
 const MAX_VIDEO_FRAMES_IN_FLIGHT: usize = 2;
+const AUDIO_QUEUE_CAPACITY: usize = 64;
+const FEEDBACK_QUEUE_CAPACITY: usize = 32;
+const MAX_AUDIO_FRAME_SAMPLES: usize = 96_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
@@ -50,6 +57,33 @@ pub struct EncodedVideoFrame {
     pub height: u32,
     /// RTP timestamp; zero allows libwebrtc to assign one.
     pub rtp_timestamp: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedVideoFrame {
+    /// BGRA pixel bytes. Shared ownership lets the receiver retain the latest
+    /// frame without introducing another full-frame copy.
+    pub bgra: Arc<[u8]>,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedAudioFrame {
+    /// Interleaved signed 16-bit PCM samples.
+    pub pcm: Vec<i16>,
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub frames: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VideoEncoderFeedback {
+    RequestKeyFrame,
+    RateUpdate {
+        bitrate_bps: u32,
+        framerate_fps: f64,
+    },
 }
 
 /// Submission failure. `frame` is returned for validation/backpressure errors;
@@ -80,6 +114,10 @@ pub enum SessionError {
     InputQueueOverflow(u64),
     #[error("control backlog exceeded its bound; {0} control message(s) were dropped")]
     ControlQueueOverflow(u64),
+    #[error("audio receive queue exceeded its bound; {0} audio chunk(s) were dropped")]
+    AudioQueueOverflow(u64),
+    #[error("video encoder feedback queue exceeded its bound; {0} feedback event(s) were dropped")]
+    FeedbackQueueOverflow(u64),
     #[error("signaling backlog exceeded its bound; {0} ICE candidate(s) were dropped")]
     IceQueueOverflow(u64),
     #[error("input send is backpressured; retry or coalesce replaceable pointer updates")]
@@ -98,6 +136,8 @@ pub enum SessionError {
     QueueClosed,
     #[error("session description has an unexpected kind")]
     WrongDescriptionKind,
+    #[error("signaling payload exceeds the configured size limit")]
+    SignalingPayloadTooLarge,
 }
 
 pub type Result<T> = std::result::Result<T, SessionError>;
@@ -153,9 +193,12 @@ pub struct GshSession {
     _audio: Option<AudioTrack>,
     input_channel: ChannelSlot,
     control_channel: ChannelSlot,
-    input_rx: mpsc::Receiver<UserInput>,
-    control_rx: mpsc::Receiver<Vec<u8>>,
-    ice_rx: mpsc::Receiver<CandidateMessage>,
+    input_rx: tokio::sync::Mutex<mpsc::Receiver<UserInput>>,
+    control_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
+    video_rx: tokio::sync::Mutex<watch::Receiver<Option<Arc<DecodedVideoFrame>>>>,
+    audio_rx: tokio::sync::Mutex<mpsc::Receiver<DecodedAudioFrame>>,
+    feedback_rx: tokio::sync::Mutex<mpsc::Receiver<VideoEncoderFeedback>>,
+    ice_rx: tokio::sync::Mutex<mpsc::Receiver<CandidateMessage>>,
     dropped_input: Arc<AtomicU64>,
     dropped_control: Arc<AtomicU64>,
     dropped_ice: Arc<AtomicU64>,
@@ -167,6 +210,11 @@ pub struct GshSession {
     video_frames_in_flight: Arc<AtomicUsize>,
     _video_sender_transform: Option<FrameTransform>,
     video_failed: AtomicBool,
+    dropped_audio: Arc<AtomicU64>,
+    dropped_feedback: Arc<AtomicU64>,
+    dropped_video: Arc<AtomicU64>,
+    _remote_tracks: Arc<Mutex<Vec<RemoteTrack>>>,
+    codec_preferences: Vec<VideoCodec>,
 }
 
 impl GshSession {
@@ -177,11 +225,34 @@ impl GshSession {
         width: u32,
         height: u32,
     ) -> Result<Self> {
+        Self::new_with_video_codecs(
+            factory,
+            config,
+            role,
+            width,
+            height,
+            &[VideoCodec::H264, VideoCodec::Vp8],
+        )
+    }
+
+    /// Create a session with explicit preferred codecs in fallback order.
+    pub fn new_with_video_codecs(
+        factory: PeerConnectionFactory,
+        config: RtcConfiguration,
+        role: SessionRole,
+        width: u32,
+        height: u32,
+        codec_preferences: &[VideoCodec],
+    ) -> Result<Self> {
         if width == 0 || height == 0 || width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION
         {
             return Err(SessionError::WebRtc(format!(
                 "video dimensions must be in 1..={MAX_FRAME_DIMENSION}"
             )));
+        }
+        let rtc_codec_preferences = rtc_codec_preferences(codec_preferences);
+        if rtc_codec_preferences.is_empty() {
+            return Err(SessionError::VideoCodecUnavailable);
         }
 
         let (video, audio) = if role == SessionRole::Offerer {
@@ -210,10 +281,17 @@ impl GshSession {
 
         let (input_tx, input_rx) = mpsc::channel(INPUT_QUEUE_CAPACITY);
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
+        let (video_tx, video_rx) = watch::channel(None);
+        let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
+        let (feedback_tx, feedback_rx) = mpsc::channel(FEEDBACK_QUEUE_CAPACITY);
         let (ice_tx, ice_rx) = mpsc::channel(ICE_QUEUE_CAPACITY);
         let dropped_input = Arc::new(AtomicU64::new(0));
         let dropped_control = Arc::new(AtomicU64::new(0));
         let dropped_ice = Arc::new(AtomicU64::new(0));
+        let dropped_audio = Arc::new(AtomicU64::new(0));
+        let dropped_feedback = Arc::new(AtomicU64::new(0));
+        let dropped_video = Arc::new(AtomicU64::new(0));
+        let remote_tracks = Arc::new(Mutex::new(Vec::new()));
         let connected = Arc::new(AtomicBool::new(false));
         let telemetry = PipelineTelemetry::default();
         let input_channel: ChannelSlot = Arc::new(Mutex::new(None));
@@ -227,6 +305,25 @@ impl GshSession {
             dropped_control: dropped_control.clone(),
             telemetry: telemetry.clone(),
         };
+        if let Some(video) = video.as_ref() {
+            let dropped_feedback = dropped_feedback.clone();
+            video.on_encoder_feedback(move |feedback| {
+                let event = match feedback {
+                    RtcEncoderFeedback::KeyFrameRequest => VideoEncoderFeedback::RequestKeyFrame,
+                    RtcEncoderFeedback::RateUpdate {
+                        bitrate_bps,
+                        framerate_fps,
+                    } => VideoEncoderFeedback::RateUpdate {
+                        bitrate_bps,
+                        framerate_fps,
+                    },
+                    _ => return,
+                };
+                if feedback_tx.try_send(event).is_err() {
+                    dropped_feedback.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        }
 
         let observer = PeerConnectionObserver::new()
             .on_connection_state_change({
@@ -255,6 +352,69 @@ impl GshSession {
                 move |channel| {
                     route_data_channel(channel, &channel_router);
                 }
+            })
+            .on_track({
+                let telemetry = telemetry.clone();
+                let dropped_audio = dropped_audio.clone();
+                let dropped_video = dropped_video.clone();
+                let remote_tracks = remote_tracks.clone();
+                move |track| {
+                    match &track {
+                        RemoteTrack::Video(video) => {
+                            let video_tx = video_tx.clone();
+                            let telemetry = telemetry.clone();
+                            let dropped_video = dropped_video.clone();
+                            video.on_frame(move |frame| {
+                                let _timer = telemetry.time(Stage::Decode);
+                                let expected = (frame.width as usize)
+                                    .checked_mul(frame.height as usize)
+                                    .and_then(|pixels| pixels.checked_mul(4));
+                                if frame.width == 0
+                                    || frame.height == 0
+                                    || frame.width > MAX_FRAME_DIMENSION
+                                    || frame.height > MAX_FRAME_DIMENSION
+                                    || expected != Some(frame.bgra.len())
+                                    || frame.bgra.len() > MAX_DECODED_FRAME_BYTES
+                                {
+                                    dropped_video.fetch_add(1, Ordering::Relaxed);
+                                    return;
+                                }
+                                video_tx.send_replace(Some(Arc::new(DecodedVideoFrame {
+                                    bgra: Arc::from(frame.bgra),
+                                    width: frame.width,
+                                    height: frame.height,
+                                })));
+                            });
+                        }
+                        RemoteTrack::Audio(audio) => {
+                            let audio_tx = audio_tx.clone();
+                            let dropped_audio = dropped_audio.clone();
+                            let telemetry = telemetry.clone();
+                            audio.on_frame(move |frame| {
+                                let _timer = telemetry.time(Stage::Decode);
+                                if frame.pcm.len() > MAX_AUDIO_FRAME_SAMPLES {
+                                    dropped_audio.fetch_add(1, Ordering::Relaxed);
+                                    return;
+                                }
+                                if audio_tx
+                                    .try_send(DecodedAudioFrame {
+                                        pcm: frame.pcm.to_vec(),
+                                        sample_rate: frame.sample_rate,
+                                        channels: frame.channels,
+                                        frames: frame.frames,
+                                    })
+                                    .is_err()
+                                {
+                                    dropped_audio.fetch_add(1, Ordering::Relaxed);
+                                }
+                            });
+                        }
+                    }
+                    remote_tracks
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(track);
+                }
             });
         let peer = factory
             .create_peer_connection(&config, observer)
@@ -269,7 +429,7 @@ impl GshSession {
                 .set_track(video.track())
                 .map_err(web_rtc_error)?;
             video_transceiver
-                .set_codec_preferences(&[RtcVideoCodec::H264, RtcVideoCodec::Vp8])
+                .set_codec_preferences(&rtc_codec_preferences)
                 .map_err(web_rtc_error)?;
             let frames_in_flight = video_frames_in_flight.clone();
             let transform = FrameTransform::new(move |frame| {
@@ -315,9 +475,12 @@ impl GshSession {
             _audio: audio,
             input_channel,
             control_channel,
-            input_rx,
-            control_rx,
-            ice_rx,
+            input_rx: tokio::sync::Mutex::new(input_rx),
+            control_rx: tokio::sync::Mutex::new(control_rx),
+            video_rx: tokio::sync::Mutex::new(video_rx),
+            audio_rx: tokio::sync::Mutex::new(audio_rx),
+            feedback_rx: tokio::sync::Mutex::new(feedback_rx),
+            ice_rx: tokio::sync::Mutex::new(ice_rx),
             dropped_input,
             dropped_control,
             dropped_ice,
@@ -329,6 +492,11 @@ impl GshSession {
             video_frames_in_flight,
             _video_sender_transform: video_sender_transform,
             video_failed: AtomicBool::new(false),
+            dropped_audio,
+            dropped_feedback,
+            dropped_video,
+            _remote_tracks: remote_tracks,
+            codec_preferences: codec_preferences.to_vec(),
         })
     }
 
@@ -349,12 +517,16 @@ impl GshSession {
         if offer.kind != DescriptionKind::Offer {
             return Err(SessionError::WrongDescriptionKind);
         }
+        if offer.sdp.len() > MAX_SDP_BYTES {
+            return Err(SessionError::SignalingPayloadTooLarge);
+        }
         self.peer
             .set_remote_description(&SessionDescription {
                 kind: SdpType::Offer,
                 sdp: offer.sdp,
             })
             .map_err(web_rtc_error)?;
+        let rtc_codec_preferences = rtc_codec_preferences(&self.codec_preferences);
         if let Some(video) = self
             .peer
             .transceivers()
@@ -362,7 +534,7 @@ impl GshSession {
             .find(|transceiver| transceiver.kind() == MediaKind::Video)
         {
             video
-                .set_codec_preferences(&[RtcVideoCodec::H264, RtcVideoCodec::Vp8])
+                .set_codec_preferences(&rtc_codec_preferences)
                 .map_err(web_rtc_error)?;
         }
         let answer = self.peer.create_answer().map_err(web_rtc_error)?;
@@ -385,6 +557,9 @@ impl GshSession {
         if answer.kind != DescriptionKind::Answer {
             return Err(SessionError::WrongDescriptionKind);
         }
+        if answer.sdp.len() > MAX_SDP_BYTES {
+            return Err(SessionError::SignalingPayloadTooLarge);
+        }
         let codec =
             negotiated_video_codec(&answer.sdp).ok_or(SessionError::VideoCodecUnavailable)?;
         self.peer
@@ -401,6 +576,14 @@ impl GshSession {
     }
 
     pub fn add_ice_candidate(&self, candidate: CandidateMessage) -> Result<()> {
+        if candidate.candidate.len() > MAX_ICE_CANDIDATE_BYTES
+            || candidate
+                .sdp_mid
+                .as_ref()
+                .is_some_and(|mid| mid.len() > 256)
+        {
+            return Err(SessionError::SignalingPayloadTooLarge);
+        }
         self.peer
             .add_ice_candidate(&IceCandidate {
                 candidate: candidate.candidate,
@@ -410,22 +593,23 @@ impl GshSession {
             .map_err(web_rtc_error)
     }
 
-    pub async fn next_ice_candidate(&mut self) -> Result<Option<CandidateMessage>> {
+    pub async fn next_ice_candidate(&self) -> Result<Option<CandidateMessage>> {
         let lost = self.dropped_ice.swap(0, Ordering::Relaxed);
         if lost > 0 {
             return Err(SessionError::IceQueueOverflow(lost));
         }
-        Ok(self.ice_rx.recv().await)
+        Ok(self.ice_rx.lock().await.recv().await)
     }
 
     /// Drain locally discovered ICE candidates without awaiting signaling I/O.
-    pub fn drain_ice_candidates(&mut self) -> Result<Vec<CandidateMessage>> {
+    pub async fn drain_ice_candidates(&self) -> Result<Vec<CandidateMessage>> {
         let lost = self.dropped_ice.swap(0, Ordering::Relaxed);
         if lost > 0 {
             return Err(SessionError::IceQueueOverflow(lost));
         }
         let mut candidates = Vec::new();
-        while let Ok(candidate) = self.ice_rx.try_recv() {
+        let mut receiver = self.ice_rx.lock().await;
+        while let Ok(candidate) = receiver.try_recv() {
             candidates.push(candidate);
         }
         Ok(candidates)
@@ -539,12 +723,17 @@ impl GshSession {
         channel.send(&bytes, true).map_err(web_rtc_error)
     }
 
-    pub async fn recv_input(&mut self) -> Result<UserInput> {
+    pub async fn recv_input(&self) -> Result<UserInput> {
         let lost = self.dropped_input.swap(0, Ordering::Relaxed);
         if lost > 0 {
             return Err(SessionError::InputQueueOverflow(lost));
         }
-        self.input_rx.recv().await.ok_or(SessionError::QueueClosed)
+        self.input_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(SessionError::QueueClosed)
     }
 
     /// Send a control-plane protobuf message. High-frequency media must not use
@@ -565,12 +754,54 @@ impl GshSession {
         channel.send(&bytes, true).map_err(web_rtc_error)
     }
 
-    pub async fn recv_control(&mut self) -> Result<Vec<u8>> {
+    pub async fn recv_control(&self) -> Result<Vec<u8>> {
         let lost = self.dropped_control.swap(0, Ordering::Relaxed);
         if lost > 0 {
             return Err(SessionError::ControlQueueOverflow(lost));
         }
         self.control_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(SessionError::QueueClosed)
+    }
+
+    /// Receive the latest decoded video frame. Intermediate frames are replaced
+    /// rather than queued, preventing presentation lag from growing unbounded.
+    pub async fn recv_video(&self) -> Option<Arc<DecodedVideoFrame>> {
+        let mut receiver = self.video_rx.lock().await;
+        receiver.changed().await.ok()?;
+        let frame = receiver.borrow_and_update().clone();
+        frame
+    }
+
+    pub fn dropped_decoded_video_frames(&self) -> u64 {
+        self.dropped_video.load(Ordering::Relaxed)
+    }
+
+    /// Receive a decoded PCM audio chunk from the bounded native audio queue.
+    pub async fn recv_audio(&self) -> Result<DecodedAudioFrame> {
+        let lost = self.dropped_audio.swap(0, Ordering::Relaxed);
+        if lost > 0 {
+            return Err(SessionError::AudioQueueOverflow(lost));
+        }
+        self.audio_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or(SessionError::QueueClosed)
+    }
+
+    pub async fn recv_encoder_feedback(&self) -> Result<VideoEncoderFeedback> {
+        let lost = self.dropped_feedback.swap(0, Ordering::Relaxed);
+        if lost > 0 {
+            return Err(SessionError::FeedbackQueueOverflow(lost));
+        }
+        self.feedback_rx
+            .lock()
+            .await
             .recv()
             .await
             .ok_or(SessionError::QueueClosed)
@@ -668,6 +899,20 @@ fn negotiated_video_codec(sdp: &str) -> Option<VideoCodec> {
     })
 }
 
+fn rtc_codec_preferences(preferences: &[VideoCodec]) -> Vec<RtcVideoCodec> {
+    let mut codecs = Vec::with_capacity(preferences.len());
+    for codec in preferences {
+        let native = match codec {
+            VideoCodec::H264 => RtcVideoCodec::H264,
+            VideoCodec::Vp8 => RtcVideoCodec::Vp8,
+        };
+        if !codecs.contains(&native) {
+            codecs.push(native);
+        }
+    }
+    codecs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,7 +951,7 @@ mod tests {
         runtime.block_on(async {
             let factory_offer = PeerConnectionFactory::builder().build().unwrap();
             let factory_answer = PeerConnectionFactory::builder().build().unwrap();
-            let mut offerer = GshSession::new(
+            let offerer = GshSession::new(
                 factory_offer,
                 RtcConfiguration::default(),
                 SessionRole::Offerer,
@@ -714,7 +959,7 @@ mod tests {
                 240,
             )
             .unwrap();
-            let mut answerer = GshSession::new(
+            let answerer = GshSession::new(
                 factory_answer,
                 RtcConfiguration::default(),
                 SessionRole::Answerer,
@@ -729,10 +974,10 @@ mod tests {
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
             loop {
-                for candidate in offerer.drain_ice_candidates().unwrap() {
+                for candidate in offerer.drain_ice_candidates().await.unwrap() {
                     answerer.add_ice_candidate(candidate).unwrap();
                 }
-                for candidate in answerer.drain_ice_candidates().unwrap() {
+                for candidate in answerer.drain_ice_candidates().await.unwrap() {
                     offerer.add_ice_candidate(candidate).unwrap();
                 }
                 if offerer.is_connected() && answerer.is_connected() {
@@ -759,6 +1004,12 @@ mod tests {
                         rtp_timestamp: 0,
                     })
                     .unwrap();
+                let decoded = tokio::time::timeout(Duration::from_secs(2), answerer.recv_video())
+                    .await
+                    .expect("decoded video frame receive timed out")
+                    .expect("remote video track closed");
+                assert_eq!((decoded.width, decoded.height), (320, 240));
+                assert_eq!(decoded.bgra.len(), 320 * 240 * 4);
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
                 while offerer.video_frames_pending() != 0 {
                     assert!(
@@ -802,6 +1053,19 @@ mod tests {
                 .expect("input receive timed out")
                 .unwrap();
             assert_eq!(received, input);
+
+            let pcm = vec![0_i16; 480 * 2];
+            for _ in 0..20 {
+                offerer.send_audio(&pcm, 48_000, 2).unwrap();
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let audio = tokio::time::timeout(Duration::from_secs(2), answerer.recv_audio())
+                .await
+                .expect("decoded audio receive timed out")
+                .unwrap();
+            assert_eq!(audio.sample_rate, 48_000);
+            assert!(audio.channels >= 1);
+            assert!(!audio.pcm.is_empty());
         });
     }
 }
