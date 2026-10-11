@@ -4,10 +4,10 @@
 
 `libgsh` has an opt-in `webrtc` feature backed by `reactor-webrtc 0.22.1`, with `GshSession` in `libgsh/src/webrtc.rs`.
 
-- Offerer publishes pre-encoded video track and Opus audio track, and creates separate reliable `gsh-input-v1` and `gsh-control-v1` data channels.
+- Offerer publishes pre-encoded video track and Opus audio track, and creates separate reliable `gsh-input-v1` and `gsh-control-v1` data channels. Video codec preference is H.264 first, VP8 fallback; the negotiated payload order is parsed and exposed as `negotiated_video_codec()`, and `send_video` rejects frames labeled with a different codec.
 - Answerer configures receive-only video/audio transceivers and consumes data channels created by the offerer.
 - The application-facing signaling values are `SdpMessage` and `CandidateMessage`; the application owns WebSocket/HTTP signaling.
-- `send_video` accepts `EncodedVideoFrame` as owned H.264 Annex-B bitstream bytes. Encode those frames outside the session. `send_audio` accepts PCM and feeds the factory's audio source.
+- `send_video` accepts an owned `EncodedVideoFrame` tagged H.264 or VP8. Encode the payload outside the session; the payload must match the negotiated codec. H.264 is used when both peers/build support it; VP8 is a functional compatibility fallback. `send_audio` accepts PCM and feeds the factory's audio source.
 - Input/control use protobuf payloads over data channels. Input and control receive queues have fixed capacities. Overflow is surfaced as `InputQueueOverflow(n)` or `ControlQueueOverflow(n)` on receive, requiring the application to reconcile input state or control state. Input send also applies a buffered-amount guard.
 - An opt-in native loopback test creates two sessions, negotiates SDP, trickles host ICE candidates, confirms connection state, and delivers a protobuf input message over the data channel.
 
