@@ -7,4 +7,5 @@ edition = "2021"
 libgsh = { workspace = true }
 log = "0.4.27"
 env_logger = "0.11.8"
+tokio = { version = "1.47", features = ["full"] }
 xcap = { version = "0.9.8", features = ["image"] }

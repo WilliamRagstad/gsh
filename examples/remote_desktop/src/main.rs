@@ -1,3 +1,8 @@
+mod application;
+mod frame_source;
+
+use application::RemoteDesktopApplication;
+use frame_source::{FrameHub, FrameSource};
 use libgsh::{
     async_trait::async_trait,
     server::{GshServer, GshService, GshServiceExt, ServerStream},
@@ -12,19 +17,8 @@ use libgsh::{
     tokio_rustls::rustls::ServerConfig,
     ServiceError,
 };
-use std::{
-    io::Write,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Instant,
-};
+use std::{io::Write, time::Instant};
 use xcap::Monitor;
-
-#[derive(Debug, Clone)]
-pub struct XCapFrame {
-    pub width: u32,
-    pub height: u32,
-    pub raw: Vec<u8>,
-}
 
 const FRAME_FORMAT: FrameFormat = FrameFormat::Rgba;
 const ZSTD_COMPRESSION_LEVEL: i32 = 3;
@@ -60,27 +54,48 @@ async fn main() {
         .start()
         .expect("Failed to start video recorder");
 
-    // Unsafe transmute to convert video_stream Recorder to XCapFrame receiver
-    // Ugly hack because `xcap::video_recorder::Frame` is not public.
-    let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
-    let recorder = Arc::new(Mutex::new(video_stream));
+    let (frame_hub, capture_forwarder) = FrameHub::from_xcap(video_stream);
 
-    let server = GshServer::new(RdpService::new(recorder), config);
-    server.serve().await.unwrap();
+    let application = RemoteDesktopApplication::new(frame_hub);
+    let server = GshServer::new(RdpService::new(application), config);
+    let serve_result = tokio::select! {
+        result = server.serve() => result,
+        signal = tokio::signal::ctrl_c() => {
+            signal.expect("failed to listen for Ctrl-C");
+            Ok(())
+        }
+    };
+    video_recorder
+        .stop()
+        .expect("Failed to stop video recorder");
+    capture_forwarder.stop();
+    capture_forwarder
+        .join()
+        .await
+        .expect("Screen capture forwarding task failed");
+    serve_result.unwrap();
 }
 
-#[derive(Debug, Clone)]
 pub struct RdpService {
     last_frame: Instant,
-    recorder: Arc<Mutex<Receiver<XCapFrame>>>,
+    application: RemoteDesktopApplication,
+    frames: FrameSource,
 }
 
 impl RdpService {
-    fn new(recorder: Arc<Mutex<Receiver<XCapFrame>>>) -> Self {
+    fn new(application: RemoteDesktopApplication) -> Self {
+        let frames = application.subscribe_frames();
         Self {
             last_frame: Instant::now(),
-            recorder,
+            application,
+            frames,
         }
+    }
+}
+
+impl Clone for RdpService {
+    fn clone(&self) -> Self {
+        Self::new(self.application.clone())
     }
 }
 
@@ -120,13 +135,15 @@ impl GshServiceExt for RdpService {
         _stream: &mut ServerStream,
         event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
-        log::info!("Received event: {:?}", event);
+        if let client_message::ClientEvent::UserInput(input) = event {
+            self.application.handle_input(&input);
+        }
         Ok(())
     }
 
     async fn on_tick(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
-            stream.send(self.get_frame()?).await?;
+            stream.send(self.get_frame().await?).await?;
             self.last_frame = std::time::Instant::now();
             log::debug!("Sent frame");
         }
@@ -134,42 +151,37 @@ impl GshServiceExt for RdpService {
     }
 
     async fn on_startup(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
-        stream.send(self.get_frame()?).await?;
+        stream.send(self.get_frame().await?).await?;
         log::debug!("Sent initial frame");
         Ok(())
     }
 }
 
 impl RdpService {
-    fn get_frame(&mut self) -> libgsh::Result<Frame> {
-        let frame = {
-            let video_stream = self.recorder.lock().unwrap();
-            video_stream.recv().map_err(|e| {
-                ServiceError::Error(format!("Failed to receive frame from video stream: {}", e))
-            })?
-        };
+    async fn get_frame(&mut self) -> libgsh::Result<Frame> {
+        let frame = self
+            .frames
+            .next()
+            .await
+            .ok_or_else(|| ServiceError::Error("Screen capture stream closed".to_string()))?;
 
         log::debug!(
             "Captured image of resolution {}x{} and size: {}",
             frame.width,
             frame.height,
-            frame.raw.len()
+            frame.rgba.len()
         );
-        let compressed = self.compress(&frame.raw, frame.width as usize, frame.height as usize)?;
+        let compressed = self.compress(&frame.rgba, frame.width as usize, frame.height as usize)?;
         log::debug!(
             "Compressed image size: {} (~{:.2}%)",
             compressed.len(),
-            compressed.len() as f32 * 100f32 / frame.raw.len() as f32
+            compressed.len() as f32 * 100f32 / frame.rgba.len() as f32
         );
         Ok(Frame {
             window_id: WINDOW_ID,
             width: frame.width,
             height: frame.height,
-            segments: full_frame_segment(
-                &compressed,
-                frame.width as usize,
-                frame.height as usize,
-            ),
+            segments: full_frame_segment(&compressed, frame.width as usize, frame.height as usize),
         })
     }
 
