@@ -1,5 +1,6 @@
 mod application;
 mod frame_source;
+mod nvenc;
 mod signaling;
 
 use anyhow::Context;
@@ -43,6 +44,18 @@ async fn main() -> anyhow::Result<()> {
     let config = load_tls_config()?;
     let auth = configured_auth()?;
     let legacy_tcp = std::env::args().any(|arg| arg == "--legacy-tcp");
+    let nvenc_supported = if legacy_tcp
+        || std::env::var("GSH_DISABLE_NVENC").ok().as_deref() == Some("1")
+    {
+        false
+    } else {
+        nvenc::probe_h264_nvenc().await
+    };
+    if nvenc_supported {
+        log::info!("FFmpeg h264_nvenc probe succeeded; browser H.264 offers can use NVENC");
+    } else {
+        log::warn!("FFmpeg h264_nvenc unavailable; using libwebrtc VP8 software fallback");
+    }
     let wss_address = if legacy_tcp {
         None
     } else {
@@ -73,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     let (frame_hub, capture_forwarder) = FrameHub::from_xcap(video_stream);
 
-    let application = RemoteDesktopApplication::new(frame_hub, auth, width, height);
+    let application =
+        RemoteDesktopApplication::new(frame_hub, auth, width, height, nvenc_supported);
     let server_result = if legacy_tcp {
         eprintln!("Deprecated TCP/TLS transport enabled on port 1122");
         let server = GshServer::new(RdpService::new(application), (*config).clone());

@@ -4,7 +4,7 @@ use std::{
         mpsc::{Receiver, RecvTimeoutError},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::watch;
 use xcap::Frame;
@@ -14,14 +14,18 @@ pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
     pub rgba: Arc<[u8]>,
+    pub sequence: u64,
+    pub captured_at: Instant,
 }
 
-impl From<Frame> for CapturedFrame {
-    fn from(frame: Frame) -> Self {
+impl CapturedFrame {
+    fn from_xcap(frame: Frame, sequence: u64) -> Self {
         Self {
             width: frame.width,
             height: frame.height,
             rgba: Arc::from(frame.raw),
+            sequence,
+            captured_at: Instant::now(),
         }
     }
 }
@@ -41,6 +45,7 @@ impl FrameHub {
         let stopping = Arc::new(AtomicBool::new(false));
         let worker_stopping = stopping.clone();
         let worker = tokio::task::spawn_blocking(move || {
+            let mut sequence = 0_u64;
             loop {
                 let mut frame = match receiver.recv_timeout(Duration::from_millis(20)) {
                     Ok(frame) => frame,
@@ -61,7 +66,8 @@ impl FrameHub {
                 if worker_stopping.load(Ordering::Acquire) {
                     break;
                 }
-                publisher.send_replace(Some(Arc::new(frame.into())));
+                sequence = sequence.wrapping_add(1);
+                publisher.send_replace(Some(Arc::new(CapturedFrame::from_xcap(frame, sequence))));
             }
         });
         (
@@ -138,6 +144,8 @@ mod tests {
             width: 2,
             height: 1,
             rgba: Arc::from([value; 8]),
+            sequence: value as u64,
+            captured_at: Instant::now(),
         }
     }
 

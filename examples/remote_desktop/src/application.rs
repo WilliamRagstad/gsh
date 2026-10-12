@@ -110,15 +110,23 @@ pub struct RemoteDesktopApplication {
     auth: RemoteDesktopAuth,
     width: u32,
     height: u32,
+    nvenc_supported: bool,
 }
 
 impl RemoteDesktopApplication {
-    pub fn new(frames: FrameHub, auth: RemoteDesktopAuth, width: u32, height: u32) -> Self {
+    pub fn new(
+        frames: FrameHub,
+        auth: RemoteDesktopAuth,
+        width: u32,
+        height: u32,
+        nvenc_supported: bool,
+    ) -> Self {
         Self {
             frames,
             auth,
             width,
             height,
+            nvenc_supported,
         }
     }
 
@@ -128,6 +136,10 @@ impl RemoteDesktopApplication {
 
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    pub fn nvenc_supported(&self) -> bool {
+        self.nvenc_supported
     }
 
     pub fn auth_verifier(&self) -> AuthVerifier {

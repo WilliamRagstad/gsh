@@ -1,3 +1,4 @@
+use crate::nvenc::{NvencEncoder, GOP_FRAMES, OUTPUT_FPS, OUTPUT_HEIGHT, OUTPUT_WIDTH};
 use crate::{application::RemoteDesktopApplication, frame_source::CapturedFrame};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
@@ -25,7 +26,9 @@ use libgsh::{
         },
         PROTOCOL_VERSION,
     },
-    webrtc::{CandidateMessage, GshSession, SessionRole, VideoCodec},
+    webrtc::{
+        CandidateMessage, EncodedVideoFrame, GshSession, SessionRole, VideoCodec, VideoInputMode,
+    },
     webrtc_input::{GshInputEvent, GshInputRouter},
 };
 use prost::Message as ProstMessage;
@@ -382,6 +385,85 @@ async fn run_session(
     .await
 }
 
+struct SignaledOffer {
+    sdp: String,
+    candidates: VecDeque<CandidateMessage>,
+    candidate_count: usize,
+    current_frame: Arc<CapturedFrame>,
+}
+
+async fn receive_offer(
+    socket_tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    socket_rx: &mut futures_util::stream::SplitStream<WebSocket>,
+    captured_frames: &mut crate::frame_source::FrameSource,
+    mut current_frame: Arc<CapturedFrame>,
+    width: u32,
+    height: u32,
+) -> Result<Option<SignaledOffer>> {
+    let mut candidates = VecDeque::new();
+    let mut candidate_count = 0_usize;
+    let mut candidate_bytes = 0_usize;
+    let deadline = tokio::time::sleep(OFFER_TIMEOUT);
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            incoming = socket_rx.next() => {
+                let Some(incoming) = incoming else { return Ok(None); };
+                match incoming? {
+                    Message::Text(text) => {
+                        let value: Value = serde_json::from_str(text.as_str())?;
+                        match value.get("type").and_then(Value::as_str) {
+                            Some("offer") => {
+                                let sdp = value.get("sdp").and_then(Value::as_str)
+                                    .ok_or_else(|| anyhow!("offer has no SDP string"))?;
+                                validate_offer_sdp(sdp)?;
+                                return Ok(Some(SignaledOffer {
+                                    sdp: sdp.to_owned(),
+                                    candidates,
+                                    candidate_count,
+                                    current_frame,
+                                }));
+                            }
+                            Some("candidate") => {
+                                let candidate = parse_candidate(&value)?;
+                                candidate_count += 1;
+                                if candidate_count > MAX_ICE_CANDIDATES_PER_SESSION {
+                                    bail!("too many ICE candidates before SDP offer");
+                                }
+                                let candidate_size = candidate.candidate.len()
+                                    + candidate.sdp_mid.as_ref().map_or(0, String::len)
+                                    + std::mem::size_of_val(&candidate.sdp_mline_index);
+                                candidate_bytes = candidate_bytes
+                                    .checked_add(candidate_size)
+                                    .ok_or_else(|| anyhow!("pending ICE candidate size overflow"))?;
+                                if candidate_bytes > MAX_PENDING_CANDIDATE_BYTES {
+                                    bail!("pending ICE candidates exceed {MAX_PENDING_CANDIDATE_BYTES} bytes");
+                                }
+                                candidates.push_back(candidate);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Message::Close(_) => return Ok(None),
+                    Message::Ping(payload) => socket_tx.send(Message::Pong(payload)).await?,
+                    Message::Binary(_) | Message::Pong(_) => {}
+                }
+            }
+            captured = captured_frames.next() => {
+                let Some(captured) = captured else {
+                    bail!("screen-capture source closed before SDP offer");
+                };
+                if (captured.width, captured.height) != (width, height) {
+                    bail!("capture dimensions changed before WebRTC negotiation");
+                }
+                current_frame = captured;
+            }
+            _ = &mut deadline => bail!("timed out waiting for authenticated WebRTC offer"),
+        }
+    }
+}
+
 async fn run_webrtc_session(
     socket_tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     socket_rx: &mut futures_util::stream::SplitStream<WebSocket>,
@@ -390,29 +472,104 @@ async fn run_webrtc_session(
     initial_frame: Arc<CapturedFrame>,
 ) -> Result<()> {
     let (width, height) = application.dimensions();
-    let session = Arc::new(GshSession::new_raw_video(
-        PeerConnectionFactory::builder().build()?,
-        RtcConfiguration::default(),
-        SessionRole::AnswererPublisher,
+    let Some(offer) = receive_offer(
+        socket_tx,
+        socket_rx,
+        &mut captured_frames,
+        initial_frame,
         width,
         height,
-    )?);
-    let mut remote_description_set = false;
-    let mut pending_candidates = VecDeque::new();
-    let mut pending_candidate_bytes = 0_usize;
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    let rtp_timestamp_origin = offer.current_frame.captured_at;
+    let mut last_nvenc_sequence = offer.current_frame.sequence;
+
+    let offers_h264 = sdp_offers_h264(&offer.sdp);
+    let offers_vp8 = sdp_offers_vp8(&offer.sdp);
+    let mut nvenc_encoder = if application.nvenc_supported() && offers_h264 {
+        match NvencEncoder::spawn(width, height) {
+            Ok(encoder) => {
+                log::info!("Using FFmpeg h264_nvenc at 1920x1080/60 for this peer");
+                Some(encoder)
+            }
+            Err(error) => {
+                log::warn!("NVENC session startup failed; using VP8 software fallback: {error:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if nvenc_encoder.is_none() && !offers_vp8 {
+        bail!("NVENC unavailable and remote offer has no VP8 software-fallback codec");
+    }
+
+    let session = Arc::new(if nvenc_encoder.is_some() {
+        GshSession::new_with_video_input(
+            PeerConnectionFactory::builder().build()?,
+            RtcConfiguration::default(),
+            SessionRole::AnswererPublisher,
+            OUTPUT_WIDTH,
+            OUTPUT_HEIGHT,
+            VideoInputMode::PreEncoded,
+            &[VideoCodec::H264],
+        )?
+    } else {
+        GshSession::new_raw_video(
+            PeerConnectionFactory::builder().build()?,
+            RtcConfiguration::default(),
+            SessionRole::AnswererPublisher,
+            width,
+            height,
+        )?
+    });
+    let answer = session.accept_offer(libgsh::webrtc::SdpMessage {
+        kind: libgsh::webrtc::DescriptionKind::Offer,
+        sdp: offer.sdp,
+    })?;
+    for candidate in offer.candidates {
+        session.add_ice_candidate(candidate)?;
+    }
+    send_signal(
+        socket_tx,
+        json!({
+            "type": "answer",
+            "sdp": answer.sdp
+        }),
+    )
+    .await?;
+
+    let (mut nvenc_input, mut encoded_frames, mut nvenc_process) = match nvenc_encoder.take() {
+        Some(encoder) => {
+            let (input, output, process) = encoder.into_parts();
+            (Some(input), Some(output), Some(process))
+        }
+        None => (None, None, None),
+    };
+    let mut pending_encoded_frame: Option<EncodedVideoFrame> = None;
     let mut input_router = GshInputRouter::default();
-    let mut current_frame = initial_frame;
+    let mut current_frame = offer.current_frame;
     let mut pacer = FramePacer::new(60)?;
     let mut connection_poll = tokio::time::interval(Duration::from_millis(100));
     connection_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let negotiation_deadline = tokio::time::sleep(OFFER_TIMEOUT);
     tokio::pin!(negotiation_deadline);
-    let mut candidate_count = 0_usize;
+    let mut candidate_count = offer.candidate_count;
     let mut was_connected = false;
     let mut frame_number = 0_u32;
+    let mut last_nvenc_writer_report = 0_u64;
 
     let result: Result<()> = async {
         loop {
+            let encoded_access_unit = async {
+                match encoded_frames.as_mut() {
+                    Some(receiver) => Some(receiver.recv().await),
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 incoming = socket_rx.next() => {
                     let Some(incoming) = incoming else { break; };
@@ -421,25 +578,7 @@ async fn run_webrtc_session(
                             let value: Value = serde_json::from_str(text.as_str())?;
                             match value.get("type").and_then(Value::as_str) {
                                 Some("offer") => {
-                                    if remote_description_set {
-                                        bail!("duplicate remote offer");
-                                    }
-                                    let sdp = value.get("sdp").and_then(Value::as_str)
-                                        .ok_or_else(|| anyhow!("offer has no SDP string"))?;
-                                    validate_offer_sdp(sdp)?;
-                                    let answer = session.accept_offer(libgsh::webrtc::SdpMessage {
-                                        kind: libgsh::webrtc::DescriptionKind::Offer,
-                                        sdp: sdp.to_owned(),
-                                    })?;
-                                    remote_description_set = true;
-                                    while let Some(candidate) = pending_candidates.pop_front() {
-                                        session.add_ice_candidate(candidate)?;
-                                    }
-                                    pending_candidate_bytes = 0;
-                                    send_signal(socket_tx, json!({
-                                        "type": "answer",
-                                        "sdp": answer.sdp
-                                    })).await?;
+                                    bail!("renegotiation offers are not supported by this session");
                                 }
                                 Some("candidate") => {
                                     let candidate = parse_candidate(&value)?;
@@ -447,20 +586,7 @@ async fn run_webrtc_session(
                                     if candidate_count > MAX_ICE_CANDIDATES_PER_SESSION {
                                         bail!("too many ICE candidates in one session");
                                     }
-                                    if remote_description_set {
-                                        session.add_ice_candidate(candidate)?;
-                                    } else {
-                                        let candidate_size = candidate.candidate.len()
-                                            + candidate.sdp_mid.as_ref().map_or(0, String::len)
-                                            + std::mem::size_of_val(&candidate.sdp_mline_index);
-                                        pending_candidate_bytes = pending_candidate_bytes
-                                            .checked_add(candidate_size)
-                                            .ok_or_else(|| anyhow!("pending ICE candidate size overflow"))?;
-                                        if pending_candidate_bytes > MAX_PENDING_CANDIDATE_BYTES {
-                                            bail!("pending ICE candidates exceed {MAX_PENDING_CANDIDATE_BYTES} bytes");
-                                        }
-                                        pending_candidates.push_back(candidate);
-                                    }
+                                    session.add_ice_candidate(candidate)?;
                                 }
                                 _ => {}
                             }
@@ -513,16 +639,69 @@ async fn run_webrtc_session(
                     }
                     current_frame = captured;
                 }
+                access_unit = encoded_access_unit, if nvenc_input.is_some() && pending_encoded_frame.is_none() => {
+                    let Some(access_unit) = access_unit else {
+                        bail!("NVENC output channel closed");
+                    };
+                    let access_unit = access_unit.ok_or_else(|| anyhow!("NVENC encoder stopped"))?;
+                    let frame = EncodedVideoFrame {
+                        data: access_unit.data,
+                        codec: VideoCodec::H264,
+                        is_key_frame: access_unit.is_key_frame,
+                        width: OUTPUT_WIDTH,
+                        height: OUTPUT_HEIGHT,
+                        rtp_timestamp: access_unit
+                            .captured_at
+                            .ok_or_else(|| anyhow!("NVENC output missing capture timestamp"))?
+                            .saturating_duration_since(rtp_timestamp_origin)
+                            .as_nanos()
+                            .saturating_mul(90_000)
+                            .checked_div(1_000_000_000)
+                            .unwrap_or_default() as u32,
+                    };
+                    match session.send_video(frame) {
+                        Ok(()) => frame_number = frame_number.wrapping_add(1),
+                        Err(error) if matches!(error.error, libgsh::webrtc::SessionError::VideoBackpressure) => {
+                            pending_encoded_frame = error.frame;
+                        }
+                        Err(error) => bail!("H.264 video submission failed: {}", error.error),
+                    }
+                }
                 tick = pacer.wait_next() => {
-                    if session.is_connected()
-                        && session.negotiated_video_codec() == Some(VideoCodec::Vp8)
-                    {
-                        match session.send_raw_video(&current_frame.rgba) {
-                            Ok(()) => frame_number = frame_number.wrapping_add(1),
-                            Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
-                                log::trace!("Raw video frame skipped under encoder backpressure");
+                    if session.is_connected() {
+                        let mut capture_slot_open = true;
+                        if let Some(frame) = pending_encoded_frame.take() {
+                            match session.send_video(frame) {
+                                Ok(()) => frame_number = frame_number.wrapping_add(1),
+                                Err(error) if matches!(error.error, libgsh::webrtc::SessionError::VideoBackpressure) => {
+                                    pending_encoded_frame = error.frame;
+                                    capture_slot_open = false;
+                                }
+                                Err(error) => bail!("H.264 video submission failed: {}", error.error),
                             }
-                            Err(error) => return Err(error.into()),
+                        }
+                        if capture_slot_open {
+                            if let Some(input) = nvenc_input.as_ref() {
+                                if current_frame.sequence != last_nvenc_sequence {
+                                    input.submit_latest(current_frame.clone());
+                                    last_nvenc_sequence = current_frame.sequence;
+                                    let written = input.frames_written();
+                                    if written.saturating_sub(last_nvenc_writer_report)
+                                        >= u64::from(OUTPUT_FPS)
+                                    {
+                                        log::debug!("NVENC submitted {written} raw capture frames");
+                                        last_nvenc_writer_report = written;
+                                    }
+                                }
+                            } else if session.negotiated_video_codec() == Some(VideoCodec::Vp8) {
+                                match session.send_raw_video(&current_frame.rgba) {
+                                    Ok(()) => frame_number = frame_number.wrapping_add(1),
+                                    Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
+                                        log::trace!("Raw VP8 frame skipped under encoder backpressure");
+                                    }
+                                    Err(error) => bail!("Raw video submission failed: {error}"),
+                                }
+                            }
                         }
                     }
                     if tick.skipped > 0 {
@@ -539,6 +718,18 @@ async fn run_webrtc_session(
                 _ = &mut negotiation_deadline, if !session.is_connected() => {
                     bail!("timed out waiting for direct WebRTC ICE connection");
                 }
+                feedback = session.recv_encoder_feedback() => {
+                    match feedback? {
+                        libgsh::webrtc::VideoEncoderFeedback::RequestKeyFrame => {
+                            if nvenc_input.is_some() {
+                                log::warn!("Receiver requested an H.264 keyframe; CLI NVENC cannot force IDR immediately; next periodic IDR is due within about {:.3}s", GOP_FRAMES as f32 / OUTPUT_FPS as f32);
+                            }
+                        }
+                        libgsh::webrtc::VideoEncoderFeedback::RateUpdate { bitrate_bps, framerate_fps } => {
+                            log::info!("Encoder feedback {bitrate_bps} bps @ {framerate_fps:.1} fps; NVENC target remains fixed");
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -549,6 +740,11 @@ async fn run_webrtc_session(
         dispatch_input(&application, vec![event], width, height);
     }
     result?;
+    encoded_frames.as_mut().map(|receiver| receiver.close());
+    nvenc_input.take();
+    if let Some(process) = nvenc_process.take() {
+        process.shutdown().await?;
+    }
     log::debug!("WebRTC remote-desktop session ended after {frame_number} frame submissions");
     Ok(())
 }
@@ -647,6 +843,34 @@ fn parse_candidate(value: &Value) -> Result<CandidateMessage> {
             .and_then(Value::as_u64)
             .and_then(|index| u16::try_from(index).ok()),
     })
+}
+
+fn sdp_offers_h264(sdp: &str) -> bool {
+    sdp_offers_codec(sdp, "h264/")
+}
+
+fn sdp_offers_vp8(sdp: &str) -> bool {
+    sdp_offers_codec(sdp, "vp8/")
+}
+
+fn sdp_offers_codec(sdp: &str, codec_name: &str) -> bool {
+    let mut video_payloads = HashSet::new();
+    let mut matching_payloads = HashSet::new();
+    for line in sdp.lines().map(str::trim) {
+        if let Some(media) = line.strip_prefix("m=video ") {
+            video_payloads.extend(media.split_whitespace().skip(2));
+        } else if let Some(mapping) = line.strip_prefix("a=rtpmap:") {
+            let Some((payload, codec)) = mapping.split_once(char::is_whitespace) else {
+                continue;
+            };
+            if codec.to_ascii_lowercase().starts_with(codec_name) {
+                matching_payloads.insert(payload);
+            }
+        }
+    }
+    video_payloads
+        .iter()
+        .any(|payload| matching_payloads.contains(payload))
 }
 
 fn validate_offer_sdp(sdp: &str) -> Result<()> {
@@ -880,6 +1104,19 @@ mod tests {
     }
 
     #[test]
+    fn h264_selection_requires_payload_on_video_media_line() {
+        let sdp = "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 102\r\na=rtpmap:96 VP8/90000\r\na=rtpmap:102 H264/90000\r\n";
+        assert!(sdp_offers_h264(sdp));
+        assert!(sdp_offers_vp8(sdp));
+        assert!(!sdp_offers_h264(
+            "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\na=rtpmap:102 H264/90000\r\n"
+        ));
+        let h264_only = "m=video 9 UDP/TLS/RTP/SAVPF 102\r\na=rtpmap:102 H264/90000\r\n";
+        assert!(sdp_offers_h264(h264_only));
+        assert!(!sdp_offers_vp8(h264_only));
+    }
+
+    #[test]
     fn auth_attempt_limit_reserves_concurrent_guesses_per_peer_ip() {
         let limiter = Arc::new(AuthRateLimiter::default());
         let attacker = "192.0.2.10".parse().unwrap();
@@ -938,7 +1175,7 @@ mod tests {
             .send(Frame::new(320, 240, vec![0; 320 * 240 * 4]))
             .unwrap();
         let (frame_hub, forwarder) = crate::frame_source::FrameHub::from_xcap(frame_rx);
-        let application = RemoteDesktopApplication::new(frame_hub, server_auth, 320, 240);
+        let application = RemoteDesktopApplication::new(frame_hub, server_auth, 320, 240, false);
         let (certified_key, private_key) =
             libgsh::shared::cert::self_signed(&["127.0.0.1"]).unwrap();
         let certificate = certified_key.cert.der().clone();
