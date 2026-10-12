@@ -621,6 +621,16 @@ async fn run_webrtc_session(
                         Err(error) => log::warn!("GSH control channel error: {error}"),
                     }
                 }
+                input = session.recv_input() => {
+                    match input {
+                        Ok(input) => application.handle_input(&input),
+                        Err(libgsh::webrtc::SessionError::InputQueueOverflow(dropped)) => {
+                            log::warn!("Dropped {dropped} native GSH input message(s)");
+                        }
+                        Err(libgsh::webrtc::SessionError::QueueClosed) => break,
+                        Err(error) => log::warn!("Native GSH input channel error: {error}"),
+                    }
+                }
                 realtime = session.recv_realtime() => {
                     match realtime {
                         Ok(bytes) => match input_router.handle_realtime(&bytes) {
@@ -694,7 +704,8 @@ async fn run_webrtc_session(
                                     }
                                 }
                             } else if session.negotiated_video_codec() == Some(VideoCodec::Vp8) {
-                                match session.send_raw_video(&current_frame.rgba) {
+                                let bgra = rgba_to_bgra(&current_frame.rgba)?;
+                                match session.send_raw_video(&bgra) {
                                     Ok(()) => frame_number = frame_number.wrapping_add(1),
                                     Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
                                         log::trace!("Raw VP8 frame skipped under encoder backpressure");
@@ -1011,6 +1022,17 @@ fn normalized_to_pixels(position: f32, extent: u32) -> i32 {
     (position.clamp(0.0, 1.0) * (extent - 1) as f32).round() as i32
 }
 
+fn rgba_to_bgra(rgba: &[u8]) -> Result<Vec<u8>> {
+    if rgba.len() % 4 != 0 {
+        bail!("captured RGBA frame has incomplete pixel data");
+    }
+    let mut bgra = rgba.to_vec();
+    for pixel in bgra.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    Ok(bgra)
+}
+
 fn browser_key_code(code: &str) -> Option<i32> {
     if let Some(letter) = code.strip_prefix("Key").filter(|s| s.len() == 1) {
         return Some(letter.as_bytes()[0].to_ascii_lowercase() as i32);
@@ -1053,6 +1075,15 @@ mod tests {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::Message as ClientWsMessage;
     use xcap::Frame;
+
+    #[test]
+    fn rgba_capture_is_converted_to_webrtc_bgra_order() {
+        assert_eq!(
+            rgba_to_bgra(&[10, 20, 30, 40, 50, 60, 70, 80]).unwrap(),
+            [30, 20, 10, 40, 70, 60, 50, 80]
+        );
+        assert!(rgba_to_bgra(&[1, 2, 3]).is_err());
+    }
 
     #[test]
     fn browser_origin_must_match_configured_https_origin_exactly() {

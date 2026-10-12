@@ -44,13 +44,12 @@ async fn main() -> anyhow::Result<()> {
     let config = load_tls_config()?;
     let auth = configured_auth()?;
     let legacy_tcp = std::env::args().any(|arg| arg == "--legacy-tcp");
-    let nvenc_supported = if legacy_tcp
-        || std::env::var("GSH_DISABLE_NVENC").ok().as_deref() == Some("1")
-    {
-        false
-    } else {
-        nvenc::probe_h264_nvenc().await
-    };
+    let nvenc_supported =
+        if legacy_tcp || std::env::var("GSH_DISABLE_NVENC").ok().as_deref() == Some("1") {
+            false
+        } else {
+            nvenc::probe_h264_nvenc().await
+        };
     if nvenc_supported {
         log::info!("FFmpeg h264_nvenc probe succeeded; browser H.264 offers can use NVENC");
     } else {
@@ -61,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Some(
             std::env::var("GSH_WSS_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:8787".to_string())
+                .unwrap_or_else(|_| "127.0.0.1:8787".to_string())
                 .parse::<SocketAddr>()?,
         )
     };
@@ -71,18 +70,20 @@ async fn main() -> anyhow::Result<()> {
         configured_origins()?
     };
 
-    let monitor = Monitor::all()?
+    let monitor = Monitor::all()
+        .context("enumerating displays for screen capture")?
         .into_iter()
         .find(|m| m.is_primary().unwrap_or(false))
-        .unwrap_or_else(|| Monitor::from_point(0, 0).expect("no monitor found"));
+        .or_else(|| Monitor::from_point(0, 0).ok())
+        .ok_or_else(|| anyhow::anyhow!("no display found for screen capture"))?;
     let width = monitor.width()?;
     let height = monitor.height()?;
     let (video_recorder, video_stream) = monitor
         .video_recorder()
-        .expect("Failed to create video recorder");
+        .context("starting screen capture; select a display in the desktop ScreenCast portal and verify PipeWire is available")?;
     video_recorder
         .start()
-        .expect("Failed to start video recorder");
+        .context("starting screen-capture recorder")?;
 
     let (frame_hub, capture_forwarder) = FrameHub::from_xcap(video_stream);
 
@@ -121,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
     };
     video_recorder
         .stop()
-        .expect("Failed to stop video recorder");
+        .context("stopping screen-capture recorder")?;
     capture_forwarder.stop();
     capture_forwarder
         .join()

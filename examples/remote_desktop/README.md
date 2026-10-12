@@ -16,6 +16,19 @@ export GSH_PASSWORD_FILE=/etc/gsh/remote-desktop.password
 cargo run --release -p remote_desktop
 ```
 
-Open `https://desktop.example.test:8787/`. Set `GSH_WSS_ADDR` to change bind address; set `GSH_ALLOWED_ORIGINS` to comma-separated trusted browser origins. WSS rejects missing/unlisted `Origin`, allows at most 4 unauthenticated and 16 total sessions, limits each peer IP to 5 in-flight/failed auth attempts per minute, and applies a 60-second total GSH-auth and 30-second WebRTC-negotiation deadline. ICE candidates and SDP candidate lists are size/count capped. Native clients must provide an allowlisted `Origin` for this endpoint. Deprecated TCP/TLS transport remains opt-in: `cargo run --release -p remote_desktop -- --legacy-tcp`.
+Open `https://desktop.example.test:8787/`. WSS binds to `127.0.0.1:8787` by default; set `GSH_WSS_ADDR` to change bind address and `GSH_ALLOWED_ORIGINS` to comma-separated trusted browser origins. WSS rejects missing/unlisted `Origin`, allows at most 4 unauthenticated and 16 total sessions, limits each peer IP to 5 in-flight/failed auth attempts per minute, and applies a 60-second total GSH-auth and 30-second WebRTC-negotiation deadline. ICE candidates and SDP candidate lists are size/count capped. Native clients must provide an allowlisted `Origin` for this endpoint. Deprecated TCP/TLS transport remains opt-in: `cargo run --release -p remote_desktop -- --legacy-tcp`.
+
+The native `gsh` client keeps TCP/TLS as its default for compatibility. Use `--webrtc` to connect to this WSS/WebRTC service; WSS certificate verification remains enabled. Pass the issuing CA with `--ca-file` when it is not installed in the system trust store, and pass a combined GSH RSA identity with `--identity-file` to use it without changing `~/.gsh/id_files.json`:
+
+```sh
+cargo run -p gsh -- --webrtc \
+  --ca-file /path/to/ca.crt \
+  --identity-file /path/to/identity.pem \
+  --id remote-desktop 127.0.0.1
+```
+
+The native client defaults to WSS port 8787 and Origin `https://<host>:8787`; `--port` and `--origin` override them. It verifies the certificate chain and retains the existing known-host fingerprint confirmation. Its WebRTC offer uses receive-only audio/video transceivers and GSH input data channels. The server still logs normalized input; operating-system input injection is not implemented.
+
+On Wayland, xcap uses the XDG Desktop Portal ScreenCast flow and PipeWire, which requires the logged-in desktop user's D-Bus session and explicit display selection. Start the server as that user, accept the portal prompt, and ensure the desktop portal and PipeWire services are active. Do not run it with `sudo`; elevated execution cannot access the user's consented portal session. Startup now returns a contextual error instead of panicking when capture setup fails.
 
 When FFmpeg reports `h264_nvenc` available and browser offer supports H.264, server starts per-peer NVENC encoder at 1920x1080, 60 FPS, 8 Mbps CBR, 30-frame IDR cadence. Set `GSH_DISABLE_NVENC=1` to force libwebrtc VP8 software fallback. If NVENC startup fails, fallback needs VP8 in the browser offer; an H.264-only offer is rejected. Single xcap capture source is shared across peers; NVENC encoders run per peer and copy RGBA frames through FFmpeg pipes. Three warmed same-host synthetic runs wrote 60 RGBA frames and emitted 58–59 timestamped H.264 access units in roughly 0.981–0.984 seconds (58.9–60.1 FPS). This is component throughput, not browser display or input-to-photon; no GPU-zero-copy claim. NVENC output has bounded queueing. Receiver keyframe requests cannot force the FFmpeg encoder immediately; periodic IDRs bound expected wait to about 0.5 seconds at configured GOP/60 FPS. The application input hook currently logs normalized GSH events; OS-level keyboard/mouse injection is not implemented. Do not expose this service without private-CA trust, strong credentials, and network access controls.

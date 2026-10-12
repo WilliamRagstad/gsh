@@ -123,6 +123,10 @@ impl AuthProvider for ClientAuthProvider {
             log::warn!("No previous host or ID file found.");
             return;
         };
+        if self.id_override.as_deref() == Some(previous_id.as_str()) {
+            log::debug!("Explicitly selected ID; skipping known-host ID prompt.");
+            return;
+        }
         let confirmation = Confirm::new()
             .with_prompt("Do you want to store this ID in the known hosts?")
             .default(false)

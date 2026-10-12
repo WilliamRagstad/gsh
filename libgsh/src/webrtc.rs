@@ -9,10 +9,10 @@ use crate::shared::protocol::UserInput;
 use crate::telemetry::{PipelineTelemetry, Stage};
 use prost::Message;
 use reactor_webrtc::{
-    AudioTrack, DataChannel, EncodedVideoFrame as RtcEncodedVideoFrame, EncodedVideoTrack,
-    EncoderFeedback as RtcEncoderFeedback, FrameAction, FrameDirection, FrameTransform,
-    IceCandidate, IceCandidateType, LocalVideoTrack as RtcLocalVideoTrack, MediaKind,
-    PeerConnection, PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState,
+    AudioTrack, DataChannel, DataChannelState, EncodedVideoFrame as RtcEncodedVideoFrame,
+    EncodedVideoTrack, EncoderFeedback as RtcEncoderFeedback, FrameAction, FrameDirection,
+    FrameTransform, IceCandidate, IceCandidateType, LocalVideoTrack as RtcLocalVideoTrack,
+    MediaKind, PeerConnection, PeerConnectionFactory, PeerConnectionObserver, PeerConnectionState,
     PreEncodedOptions, RemoteTrack, RtcConfiguration, SdpType, SessionDescription, StreamKind,
     TrackVideoEncoder, TransceiverDirection, VideoCodec as RtcVideoCodec,
     VideoFrame as RtcVideoFrame, VideoTrack as RtcVideoTrack, VideoTrackOptions,
@@ -227,6 +227,8 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 pub enum SessionRole {
     /// Creates the input and control channels before making an offer.
     Offerer,
+    /// Offers receive-only media transceivers and creates GSH data channels.
+    OffererSubscriber,
     /// Receives channels created by the offerer.
     Answerer,
     /// Answers the remote offer while publishing local media; data channels
@@ -513,7 +515,9 @@ impl GshSession {
             return Err(SessionError::VideoCodecUnavailable);
         }
 
-        let (video, audio) = if role != SessionRole::Answerer {
+        let (video, audio) = if role != SessionRole::Answerer
+            && role != SessionRole::OffererSubscriber
+        {
             let video = match video_input_mode {
                 VideoInputMode::PreEncoded => {
                     let mut options = VideoTrackOptions::default();
@@ -727,9 +731,18 @@ impl GshSession {
                 .add_transceiver(MediaKind::Audio, TransceiverDirection::SendOnly)
                 .map_err(web_rtc_error)?;
             audio_transceiver.set_track(audio).map_err(web_rtc_error)?;
+        } else if role == SessionRole::OffererSubscriber {
+            let video_transceiver = peer
+                .add_transceiver(MediaKind::Video, TransceiverDirection::RecvOnly)
+                .map_err(web_rtc_error)?;
+            video_transceiver
+                .set_codec_preferences(&rtc_codec_preferences)
+                .map_err(web_rtc_error)?;
+            peer.add_transceiver(MediaKind::Audio, TransceiverDirection::RecvOnly)
+                .map_err(web_rtc_error)?;
         }
 
-        if role == SessionRole::Offerer {
+        if role == SessionRole::Offerer || role == SessionRole::OffererSubscriber {
             let input = peer
                 .create_data_channel(INPUT_CHANNEL)
                 .map_err(web_rtc_error)?;
@@ -926,6 +939,14 @@ impl GshSession {
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
+    }
+
+    pub fn input_channel_open(&self) -> bool {
+        self.input_channel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .is_some_and(|channel| channel.state() == DataChannelState::Open)
     }
 
     /// Set libwebrtc's aggregate congestion-control bounds (bits per second).
@@ -1645,6 +1666,82 @@ mod tests {
             assert!(stats.outbound.iter().any(|stream| stream.codec.is_some()));
             let remote_stats = answerer.stats().unwrap();
             assert!(!remote_stats.inbound.is_empty());
+        });
+    }
+
+    #[test]
+    fn subscriber_offerer_receives_remote_video_and_sends_input() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let subscriber = GshSession::new(
+                PeerConnectionFactory::builder().build().unwrap(),
+                RtcConfiguration::default(),
+                SessionRole::OffererSubscriber,
+                320,
+                240,
+            )
+            .unwrap();
+            let publisher = GshSession::new_raw_video(
+                PeerConnectionFactory::builder().build().unwrap(),
+                RtcConfiguration::default(),
+                SessionRole::AnswererPublisher,
+                320,
+                240,
+            )
+            .unwrap();
+
+            let offer = subscriber.create_offer().unwrap();
+            let answer = publisher.accept_offer(offer).unwrap();
+            subscriber.accept_answer(answer).unwrap();
+
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+            loop {
+                for candidate in subscriber.drain_ice_candidates().await.unwrap() {
+                    publisher.add_ice_candidate(candidate).unwrap();
+                }
+                for candidate in publisher.drain_ice_candidates().await.unwrap() {
+                    subscriber.add_ice_candidate(candidate).unwrap();
+                }
+                if subscriber.is_connected() && publisher.is_connected() {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "ICE did not connect"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            let input = UserInput::default();
+            let input_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                if subscriber.send_input(&input).is_ok() {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < input_deadline,
+                    "subscriber input channel did not open"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let received = tokio::time::timeout(Duration::from_secs(2), publisher.recv_input())
+                .await
+                .expect("input receive timed out")
+                .unwrap();
+            assert_eq!(received, input);
+
+            publisher
+                .send_raw_video(&vec![0x40; 320 * 240 * 4])
+                .unwrap();
+            let decoded = tokio::time::timeout(Duration::from_secs(3), subscriber.recv_video())
+                .await
+                .expect("video receive timed out")
+                .expect("remote video track closed");
+            assert_eq!((decoded.width, decoded.height), (320, 240));
+            assert_eq!(decoded.bgra.len(), 320 * 240 * 4);
         });
     }
 

@@ -33,14 +33,26 @@ struct Args {
     #[clap(value_parser)]
     host: Option<String>,
     /// The port to connect to.
-    #[clap(short, long, default_value_t = 1122)]
-    port: u16,
+    #[clap(short, long)]
+    port: Option<u16>,
+    /// Connect through authenticated WebSocket signaling and WebRTC media.
+    #[clap(long)]
+    webrtc: bool,
+    /// Additional PEM CA certificate for WSS server verification.
+    #[clap(long)]
+    ca_file: Option<std::path::PathBuf>,
+    /// Exact HTTPS Origin sent to the WSS server.
+    #[clap(long)]
+    origin: Option<String>,
     /// Disable TLS server certificate verification.
     #[clap(long)]
     insecure: bool,
     /// The name of the ID file to use for authentication.
     #[clap(short, long)]
     id: Option<String>,
+    /// Use a combined GSH RSA identity PEM without registering it in ~/.gsh.
+    #[clap(long)]
+    identity_file: Option<std::path::PathBuf>,
     /// Subcommand to execute.
     #[clap(subcommand)]
     command: Option<Command>,
@@ -185,29 +197,77 @@ async fn main() {
         exit(1);
     });
 
-    println!("Connecting to {}:{}...", host, args.port);
-    let (hello, messages) = network::connect_tls(
-        &host,
-        args.port,
-        args.insecure,
-        monitor_info(&video),
-        known_hosts,
-        id_files,
-        args.id,
-    )
-    .await
-    .unwrap_or_else(|e| {
-        log::error!("Failed to connect: {}", e);
-        exit(1);
-    });
-    let format: FrameFormat = hello.format.try_into().unwrap_or_else(|_| {
-        log::error!("Failed to parse frame format: {}", hello.format);
-        exit(1);
-    });
-    let compression = hello.compression;
-    println!("Successfully connected to server!");
+    let id_override = if let Some(identity_file) = args.identity_file {
+        let name = args
+            .id
+            .clone()
+            .unwrap_or_else(|| "remote-desktop".to_string());
+        id_files.add_ephemeral_id_file(&name, identity_file);
+        Some(name)
+    } else {
+        args.id.clone()
+    };
 
-    let mut client = Client::new(sdl, video, format, compression, messages);
+    let port = args.port.unwrap_or(if args.webrtc { 8787 } else { 1122 });
+    if args.webrtc && args.insecure {
+        log::error!("--insecure is not supported for WebRTC; configure a trusted CA instead.");
+        exit(1);
+    }
+    let (hello, mut client) = if args.webrtc {
+        let host_for_origin = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.clone()
+        };
+        let origin = args
+            .origin
+            .unwrap_or_else(|| format!("https://{host_for_origin}:{port}"));
+        let (hello, session, signaling) = network::connect_webrtc(
+            &host,
+            port,
+            &origin,
+            args.ca_file.as_deref(),
+            monitor_info(&video),
+            known_hosts,
+            id_files,
+            id_override.clone(),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            log::error!("Failed to connect: {}", error);
+            exit(1);
+        });
+        (hello, Client::new_webrtc(sdl, video, session, signaling))
+    } else {
+        if args.ca_file.is_some() || args.origin.is_some() {
+            log::error!("--ca-file and --origin require --webrtc.");
+            exit(1);
+        }
+        let (hello, messages) = network::connect_tls(
+            &host,
+            port,
+            args.insecure,
+            monitor_info(&video),
+            known_hosts,
+            id_files,
+            id_override,
+        )
+        .await
+        .unwrap_or_else(|error| {
+            log::error!("Failed to connect: {}", error);
+            exit(1);
+        });
+        let format: FrameFormat = hello.format.try_into().unwrap_or_else(|_| {
+            log::error!("Failed to parse frame format: {}", hello.format);
+            exit(1);
+        });
+        let compression = hello.compression;
+        (
+            hello,
+            Client::new(sdl, video, format, compression, messages),
+        )
+    };
+    println!("Successfully connected to server!");
 
     if hello.windows.is_empty() {
         log::warn!("No initial window settings provided, creating a default window.");
@@ -231,7 +291,9 @@ async fn main() {
         exit(1);
     }
     log::info!("Shutting down client...");
-    let _ = network::shutdown_tls(client.inner_stream()).await;
+    if let Some(stream) = client.inner_stream() {
+        let _ = network::shutdown_tls(stream).await;
+    }
 }
 
 fn color_choice() -> ColorChoice {
