@@ -1,0 +1,14 @@
+[package]
+name = "webrtc_demo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+anyhow = "1.0"
+futures-util = "0.3"
+libgsh = { workspace = true, features = ["webrtc"] }
+reactor-webrtc = "=0.22.1"
+serde_json = "1.0"
+tokio = { version = "1.47", features = ["full"] }

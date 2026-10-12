@@ -1,40 +1,39 @@
+mod application;
+mod frame_source;
+mod nvenc;
+mod signaling;
+
+use anyhow::Context;
+use application::{RemoteDesktopApplication, RemoteDesktopAuth};
+use axum_server::tls_rustls::RustlsConfig;
+use frame_source::{FrameForwarder, FrameHub, FrameSource};
 use libgsh::{
     async_trait::async_trait,
     server::{GshServer, GshService, GshServiceExt, ServerStream},
-    shared::cert,
     shared::frame::full_frame_segment,
-    shared::protocol::{
-        client_message,
-        server_hello_ack::{self, window_settings, FrameFormat, WindowSettings, ZstdCompression},
-        Frame, ServerHelloAck,
+    shared::{
+        auth::AuthVerifier,
+        protocol::{client_message, Frame},
     },
     tokio,
     tokio_rustls::rustls::ServerConfig,
     ServiceError,
 };
 use std::{
-    io::Write,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Instant,
+    fs::File,
+    io::{BufReader, Write},
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use xcap::Monitor;
 
-#[derive(Debug, Clone)]
-pub struct XCapFrame {
-    pub width: u32,
-    pub height: u32,
-    pub raw: Vec<u8>,
-}
-
-const FRAME_FORMAT: FrameFormat = FrameFormat::Rgba;
 const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 const WINDOW_ID: u32 = 0;
-const INITIAL_WIDTH: usize = 480;
-const INITIAL_HEIGHT: usize = 270;
 const MAX_FPS: u32 = 60;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_line_number(true)
         .format_file(true)
@@ -42,70 +41,233 @@ async fn main() {
         .format_timestamp(None)
         .init();
 
-    let (key, private_key) = cert::self_signed(&["localhost"]).unwrap();
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![key.cert.der().clone()], private_key)
-        .unwrap();
+    let config = load_tls_config()?;
+    let auth = configured_auth()?;
+    let legacy_tcp = std::env::args().any(|arg| arg == "--legacy-tcp");
+    let nvenc_supported =
+        if legacy_tcp || std::env::var("GSH_DISABLE_NVENC").ok().as_deref() == Some("1") {
+            false
+        } else {
+            nvenc::probe_h264_nvenc().await
+        };
+    if nvenc_supported {
+        log::info!("FFmpeg h264_nvenc probe succeeded; browser H.264 offers can use NVENC");
+    } else {
+        log::warn!("FFmpeg h264_nvenc unavailable; using libwebrtc VP8 software fallback");
+    }
+    let wss_address = if legacy_tcp {
+        None
+    } else {
+        Some(
+            std::env::var("GSH_WSS_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:8787".to_string())
+                .parse::<SocketAddr>()?,
+        )
+    };
+    let allowed_origins = if legacy_tcp {
+        Vec::new()
+    } else {
+        configured_origins()?
+    };
 
     let monitor = Monitor::all()
-        .unwrap()
+        .context("enumerating displays for screen capture")?
         .into_iter()
         .find(|m| m.is_primary().unwrap_or(false))
-        .unwrap_or_else(|| Monitor::from_point(0, 0).unwrap());
+        .or_else(|| Monitor::from_point(0, 0).ok())
+        .ok_or_else(|| anyhow::anyhow!("no display found for screen capture"))?;
     let (video_recorder, video_stream) = monitor
         .video_recorder()
-        .expect("Failed to create video recorder");
+        .context("starting screen capture; select a display in the desktop ScreenCast portal and verify PipeWire is available")?;
     video_recorder
         .start()
-        .expect("Failed to start video recorder");
+        .context("starting screen-capture recorder")?;
 
-    // Unsafe transmute to convert video_stream Recorder to XCapFrame receiver
-    // Ugly hack because `xcap::video_recorder::Frame` is not public.
-    let video_stream: Receiver<XCapFrame> = unsafe { std::mem::transmute(video_stream) };
-    let recorder = Arc::new(Mutex::new(video_stream));
+    let (frame_hub, capture_forwarder) = FrameHub::from_xcap(video_stream);
+    let mut initial_frames = frame_hub.subscribe();
+    let capture_ready = async {
+        let initial_frame = tokio::time::timeout(Duration::from_secs(10), initial_frames.next())
+            .await
+            .context("timed out waiting for the first captured screen frame")?
+            .ok_or_else(|| {
+                anyhow::anyhow!("screen-capture source closed before its first frame")
+            })?;
+        let (width, height) = (initial_frame.width, initial_frame.height);
+        anyhow::ensure!(
+            width > 0
+                && height > 0
+                && width <= 8192
+                && height <= 8192
+                && initial_frame.rgba.len() == width as usize * height as usize * 4,
+            "screen-capture source returned invalid frame dimensions or pixel data"
+        );
+        Ok::<_, anyhow::Error>((initial_frame, width, height))
+    }
+    .await;
+    let (initial_frame, width, height) = match capture_ready {
+        Ok(capture) => capture,
+        Err(error) => {
+            if let Err(cleanup_error) = stop_capture(&video_recorder, capture_forwarder).await {
+                log::warn!("Screen-capture cleanup failed after startup error: {cleanup_error:#}");
+            }
+            return Err(error);
+        }
+    };
+    log::info!("Screen capture ready at {width}x{height}");
+    drop(initial_frames);
+    drop(initial_frame);
 
-    let server = GshServer::new(RdpService::new(recorder), config);
-    server.serve().await.unwrap();
+    let application =
+        RemoteDesktopApplication::new(frame_hub, auth, width, height, nvenc_supported);
+    let server_result = if legacy_tcp {
+        eprintln!("Deprecated TCP/TLS transport enabled on port 1122");
+        let server = GshServer::new(RdpService::new(application), (*config).clone());
+        tokio::select! {
+            result = server.serve() => result.map_err(anyhow::Error::from),
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                Ok(())
+            }
+        }
+    } else {
+        let address = wss_address.expect("WSS address loaded when legacy TCP is disabled");
+        let handle = axum_server::Handle::new();
+        let server = axum_server::bind_rustls(address, RustlsConfig::from_config(config.clone()))
+            .handle(handle.clone())
+            .serve(
+                signaling::router(application, allowed_origins)
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            );
+        eprintln!("GSH WebRTC remote desktop listening at wss://{address}/");
+        eprintln!("Install the issuing private CA in browser and native-client trust stores.");
+        tokio::pin!(server);
+        tokio::select! {
+            result = &mut server => result.map_err(anyhow::Error::from),
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                handle.graceful_shutdown(Some(Duration::from_secs(5)));
+                (&mut server).await.map_err(anyhow::Error::from)
+            }
+        }
+    };
+    stop_capture(&video_recorder, capture_forwarder).await?;
+    server_result?;
+    Ok(())
 }
 
-#[derive(Debug, Clone)]
+async fn stop_capture(
+    video_recorder: &xcap::VideoRecorder,
+    capture_forwarder: FrameForwarder,
+) -> anyhow::Result<()> {
+    let recorder_result = video_recorder
+        .stop()
+        .context("stopping screen-capture recorder");
+    capture_forwarder.stop();
+    let forwarder_result = capture_forwarder
+        .join()
+        .await
+        .context("joining screen-capture frame forwarder");
+    recorder_result?;
+    forwarder_result?;
+    Ok(())
+}
+
+fn load_tls_config() -> anyhow::Result<Arc<ServerConfig>> {
+    let _ = libgsh::tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+    let certificate_path = std::env::var("GSH_TLS_CERT_FILE")?;
+    let private_key_path = std::env::var("GSH_TLS_KEY_FILE")?;
+    let certificates = rustls_pemfile::certs(&mut BufReader::new(File::open(&certificate_path)?))
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to parse GSH_TLS_CERT_FILE")?;
+    let private_key =
+        rustls_pemfile::private_key(&mut BufReader::new(File::open(&private_key_path)?))
+            .context("failed to parse GSH_TLS_KEY_FILE")?
+            .ok_or_else(|| anyhow::anyhow!("GSH_TLS_KEY_FILE contains no private key"))?;
+    Ok(Arc::new(
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certificates, private_key)
+            .context("TLS certificate and private key do not match")?,
+    ))
+}
+
+fn configured_auth() -> anyhow::Result<RemoteDesktopAuth> {
+    let password_file = std::env::var_os("GSH_PASSWORD_FILE");
+    let authorized_keys_file = std::env::var_os("GSH_AUTHORIZED_KEYS_FILE");
+    match (password_file, authorized_keys_file) {
+        (Some(path), None) => {
+            let password = std::fs::read_to_string(path)?
+                .trim_end_matches(&['\r', '\n'][..])
+                .to_owned();
+            anyhow::ensure!(!password.is_empty(), "GSH_PASSWORD_FILE must not be empty");
+            Ok(RemoteDesktopAuth::password(password))
+        }
+        (None, Some(path)) => {
+            let keys = std::fs::read_to_string(path)?;
+            RemoteDesktopAuth::from_authorized_keys_pem(&keys).map_err(anyhow::Error::msg)
+        }
+        _ => anyhow::bail!("set exactly one of GSH_PASSWORD_FILE or GSH_AUTHORIZED_KEYS_FILE"),
+    }
+}
+
+fn configured_origins() -> anyhow::Result<Vec<String>> {
+    let value = std::env::var("GSH_ALLOWED_ORIGINS")?;
+    let origins = value
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !origins.is_empty(),
+        "GSH_ALLOWED_ORIGINS must contain at least one https:// origin"
+    );
+    anyhow::ensure!(
+        origins.iter().all(|origin| {
+            origin.strip_prefix("https://").is_some_and(|authority| {
+                !authority.is_empty()
+                    && authority.chars().all(|character| {
+                        character.is_ascii_alphanumeric()
+                            || matches!(character, '.' | '-' | ':' | '[' | ']')
+                    })
+            })
+        }),
+        "GSH_ALLOWED_ORIGINS must contain comma-separated https:// DNS/IPv4/IPv6 origins without paths"
+    );
+    Ok(origins)
+}
+
 pub struct RdpService {
     last_frame: Instant,
-    recorder: Arc<Mutex<Receiver<XCapFrame>>>,
+    application: RemoteDesktopApplication,
+    frames: FrameSource,
 }
 
 impl RdpService {
-    fn new(recorder: Arc<Mutex<Receiver<XCapFrame>>>) -> Self {
+    fn new(application: RemoteDesktopApplication) -> Self {
+        let frames = application.subscribe_frames();
         Self {
             last_frame: Instant::now(),
-            recorder,
+            application,
+            frames,
         }
+    }
+}
+
+impl Clone for RdpService {
+    fn clone(&self) -> Self {
+        Self::new(self.application.clone())
     }
 }
 
 #[async_trait]
 impl GshService for RdpService {
     fn server_hello(&self) -> libgsh::shared::protocol::ServerHelloAck {
-        ServerHelloAck {
-            windows: vec![WindowSettings {
-                window_id: WINDOW_ID,
-                width: INITIAL_WIDTH as u32,
-                height: INITIAL_HEIGHT as u32,
-                monitor_id: None,
-                initial_mode: window_settings::WindowMode::Windowed as i32,
-                title: "Remote Desktop".to_string(),
-                always_on_top: false,
-                allow_resize: true,
-                resize_frame: false,
-                frame_anchor: window_settings::WindowAnchor::Center as i32,
-            }],
-            format: FRAME_FORMAT as i32,
-            compression: Some(server_hello_ack::Compression::Zstd(ZstdCompression {
-                level: ZSTD_COMPRESSION_LEVEL,
-            })),
-            auth_method: None,
-        }
+        self.application.server_hello()
+    }
+
+    fn auth_verifier(&self) -> Option<AuthVerifier> {
+        Some(self.application.auth_verifier())
     }
 
     async fn main(self, stream: ServerStream) -> libgsh::Result<()> {
@@ -120,13 +282,15 @@ impl GshServiceExt for RdpService {
         _stream: &mut ServerStream,
         event: client_message::ClientEvent,
     ) -> libgsh::Result<()> {
-        log::info!("Received event: {:?}", event);
+        if let client_message::ClientEvent::UserInput(input) = event {
+            self.application.handle_input(&input);
+        }
         Ok(())
     }
 
     async fn on_tick(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
         if self.last_frame.elapsed().as_secs_f32() >= 1.0 / MAX_FPS as f32 {
-            stream.send(self.get_frame()?).await?;
+            stream.send(self.get_frame().await?).await?;
             self.last_frame = std::time::Instant::now();
             log::debug!("Sent frame");
         }
@@ -134,42 +298,37 @@ impl GshServiceExt for RdpService {
     }
 
     async fn on_startup(&mut self, stream: &mut ServerStream) -> libgsh::Result<()> {
-        stream.send(self.get_frame()?).await?;
+        stream.send(self.get_frame().await?).await?;
         log::debug!("Sent initial frame");
         Ok(())
     }
 }
 
 impl RdpService {
-    fn get_frame(&mut self) -> libgsh::Result<Frame> {
-        let frame = {
-            let video_stream = self.recorder.lock().unwrap();
-            video_stream.recv().map_err(|e| {
-                ServiceError::Error(format!("Failed to receive frame from video stream: {}", e))
-            })?
-        };
+    async fn get_frame(&mut self) -> libgsh::Result<Frame> {
+        let frame = self
+            .frames
+            .next()
+            .await
+            .ok_or_else(|| ServiceError::Error("Screen capture stream closed".to_string()))?;
 
         log::debug!(
             "Captured image of resolution {}x{} and size: {}",
             frame.width,
             frame.height,
-            frame.raw.len()
+            frame.rgba.len()
         );
-        let compressed = self.compress(&frame.raw, frame.width as usize, frame.height as usize)?;
+        let compressed = self.compress(&frame.rgba, frame.width as usize, frame.height as usize)?;
         log::debug!(
             "Compressed image size: {} (~{:.2}%)",
             compressed.len(),
-            compressed.len() as f32 * 100f32 / frame.raw.len() as f32
+            compressed.len() as f32 * 100f32 / frame.rgba.len() as f32
         );
         Ok(Frame {
             window_id: WINDOW_ID,
             width: frame.width,
             height: frame.height,
-            segments: full_frame_segment(
-                &compressed,
-                frame.width as usize,
-                frame.height as usize,
-            ),
+            segments: full_frame_segment(&compressed, frame.width as usize, frame.height as usize),
         })
     }
 

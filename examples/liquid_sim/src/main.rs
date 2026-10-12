@@ -370,8 +370,21 @@ impl GshServiceExt for LiquidSimService {
                 match MouseAction::try_from(mouse_event.action).unwrap() {
                     MouseAction::Move if input.window_id == WINDOW_ID => {
                         self.prev_mouse_pos = self.mouse_pos;
-                        self.mouse_pos =
-                            Some(Vec2::new(mouse_event.x as f32, mouse_event.y as f32));
+                        let next = if mouse_event.relative {
+                            self.mouse_pos.unwrap_or(Vec2::new(
+                                self.width as f32 * 0.5,
+                                self.height as f32 * 0.5,
+                            )) + Vec2::new(mouse_event.delta_x, mouse_event.delta_y)
+                        } else {
+                            Vec2::new(mouse_event.x as f32, mouse_event.y as f32)
+                        };
+                        self.mouse_pos = Some(next.clamp(
+                            Vec2::ZERO,
+                            Vec2::new(
+                                self.width.saturating_sub(1) as f32,
+                                self.height.saturating_sub(1) as f32,
+                            ),
+                        ));
                         log::trace!("Mouse moved to: ({}, {})", mouse_event.x, mouse_event.y);
                     }
                     MouseAction::Exit => {

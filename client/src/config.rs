@@ -23,7 +23,7 @@ fn gsh_dir() -> PathBuf {
 #[serde(rename_all = "camelCase")]
 pub struct KnownHost {
     pub host: String,
-    pub fingerprints: Vec<Vec<u8>>,  // Fingerprint of the host's public key
+    pub fingerprints: Vec<Vec<u8>>, // Fingerprint of the host's public key
     pub id_file_ref: Option<String>,
     pub password: Option<String>,
 }
@@ -141,6 +141,10 @@ impl IdFiles {
     pub fn add_id_file(&mut self, name: &str, path: PathBuf) {
         self.id_files.insert(name.to_string(), path);
         self.save();
+    }
+
+    pub fn add_ephemeral_id_file(&mut self, name: &str, path: PathBuf) {
+        self.id_files.insert(name.to_string(), path);
     }
 
     /// Find an ID file in the list of ID files

@@ -22,8 +22,13 @@ harness = false
 name = "integration_tests"
 harness = false
 
+[[bench]]
+name = "webrtc_loopback"
+harness = false
+required-features = ["webrtc"]
+
 [dependencies]
-libgsh = { path = "../libgsh" }
+libgsh = { path = "../libgsh", default-features = false }
 criterion = { workspace = true }
 tokio-test = { workspace = true }
 tokio = { version = "1.47", features = ["full"] }
@@ -31,3 +36,8 @@ env_logger = "0.11"
 log = "0.4"
 anyhow = "1.0"
 rand = "0.8"
+reactor-webrtc = { version = "=0.22.1", optional = true }
+
+[features]
+default = []
+webrtc = ["libgsh/webrtc", "dep:reactor-webrtc"]

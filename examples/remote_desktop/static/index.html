@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GSH Remote Desktop</title>
+  <style>
+    body { font: 16px system-ui; margin: 2rem auto; max-width: 980px; padding: 0 1rem; }
+    video { background: #111; max-width: 100%; width: 960px; aspect-ratio: 16 / 9; }
+    #status { white-space: pre-wrap; font-family: monospace; }
+    #auth { display: grid; gap: .6rem; max-width: 32rem; margin-block: 1rem; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>GSH Remote Desktop</h1>
+  <p>Authenticate before SDP/ICE. WebRTC protects media and data channels with DTLS/SRTP.</p>
+  <section id="auth" hidden>
+    <label id="password-label" hidden>Password <input id="password" type="password" autocomplete="current-password"></label>
+    <label id="identity-label" hidden>Choose local GSH RSA identity PEM <input id="identity" type="file" accept=".pem,text/plain"></label>
+    <button id="authenticate" type="button">Authenticate</button>
+  </section>
+  <p>RSA private identity remains in this browser; server receives only public key and challenge signature.</p>
+  <video id="video" autoplay playsinline muted tabindex="0"></video>
+  <pre id="status">Connecting with trusted WSS…</pre>
+  <script src="/client.js" defer></script>
+</body>
+</html>

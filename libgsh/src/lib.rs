@@ -9,8 +9,14 @@ pub use tokio_rustls::{self, rustls::ServerConfig};
 pub use zstd;
 
 pub mod client;
+pub mod pacing;
 pub mod server;
 pub mod shared;
+pub mod telemetry;
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_input;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {

@@ -1,4 +1,6 @@
+use crate::network::{WebRtcSignalEvent, WebRtcSignaling};
 use anyhow::{anyhow, Result};
+use libgsh::webrtc::GshSession;
 use libgsh::{
     client::ClientStream,
     shared::protocol::{
@@ -23,6 +25,7 @@ use sdl3::{
 use std::{
     collections::HashMap,
     io::Read,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -44,7 +47,10 @@ pub struct Client {
     /// Mapping from server ID to SDL window ID
     server_window_to_sdl_window: HashMap<WindowID, WindowID>,
     sdl_window_to_server_window: HashMap<WindowID, WindowID>,
-    stream: ClientStream,
+    stream: Option<ClientStream>,
+    webrtc: Option<Arc<GshSession>>,
+    signaling: Option<Arc<WebRtcSignaling>>,
+    webrtc_frames_rendered: u64,
 }
 
 impl Client {
@@ -63,12 +69,47 @@ impl Client {
             windows: HashMap::new(),
             server_window_to_sdl_window: HashMap::new(),
             sdl_window_to_server_window: HashMap::new(),
-            stream,
+            stream: Some(stream),
+            webrtc: None,
+            signaling: None,
+            webrtc_frames_rendered: 0,
         }
     }
 
-    pub fn inner_stream(&mut self) -> &mut ClientStream {
-        &mut self.stream
+    pub fn new_webrtc(
+        sdl: sdl3::Sdl,
+        video: sdl3::VideoSubsystem,
+        session: Arc<GshSession>,
+        signaling: WebRtcSignaling,
+    ) -> Self {
+        Self {
+            sdl,
+            video,
+            format: FrameFormat::Rgba,
+            compression: None,
+            windows: HashMap::new(),
+            server_window_to_sdl_window: HashMap::new(),
+            sdl_window_to_server_window: HashMap::new(),
+            stream: None,
+            webrtc: Some(session),
+            signaling: Some(Arc::new(signaling)),
+            webrtc_frames_rendered: 0,
+        }
+    }
+
+    pub fn inner_stream(&mut self) -> Option<&mut ClientStream> {
+        self.stream.as_mut()
+    }
+
+    async fn send_input(&mut self, input: UserInput) -> Result<()> {
+        if let Some(session) = &self.webrtc {
+            session.send_input(&input).map_err(|error| anyhow!(error))?;
+        } else if let Some(stream) = &mut self.stream {
+            stream.send(input).await?;
+        } else {
+            return Err(anyhow!("client has no active transport"));
+        }
+        Ok(())
     }
 
     pub fn create_window(&mut self, ws: &WindowSettings) -> Result<WindowID> {
@@ -106,9 +147,7 @@ impl Client {
         log::info!("Window ID {} created", ws.window_id);
         canvas.clear();
         canvas.present();
-        let sdl_window = SdlWindow {
-            canvas,
-        };
+        let sdl_window = SdlWindow { canvas };
         self.windows.insert(sdl_window_id, sdl_window);
         Ok(ws.window_id)
     }
@@ -118,21 +157,20 @@ impl Client {
             win.canvas.window_mut().hide();
             if let Some(server_window_id) = self.sdl_window_to_server_window.remove(&window_id) {
                 self.server_window_to_sdl_window.remove(&server_window_id);
-                self.stream
-                    .send(protocol::UserInput {
-                        window_id: server_window_id,
-                        kind: protocol::user_input::InputType::WindowEvent as i32,
-                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
-                            user_input::WindowEvent {
-                                action: WindowAction::Close as i32,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                            },
-                        )),
-                    })
-                    .await?;
+                self.send_input(protocol::UserInput {
+                    window_id: server_window_id,
+                    kind: protocol::user_input::InputType::WindowEvent as i32,
+                    input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                        user_input::WindowEvent {
+                            action: WindowAction::Close as i32,
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0,
+                        },
+                    )),
+                })
+                .await?;
                 log::info!(
                     "Window ID {} destroyed (server id {})",
                     window_id,
@@ -140,21 +178,20 @@ impl Client {
                 );
             } else {
                 // Fallback: send to window 0 if no mapping exists
-                self.stream
-                    .send(protocol::UserInput {
-                        window_id: 0,
-                        kind: protocol::user_input::InputType::WindowEvent as i32,
-                        input_event: Some(protocol::user_input::InputEvent::WindowEvent(
-                            user_input::WindowEvent {
-                                action: WindowAction::Close as i32,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                            },
-                        )),
-                    })
-                    .await?;
+                self.send_input(protocol::UserInput {
+                    window_id: 0,
+                    kind: protocol::user_input::InputType::WindowEvent as i32,
+                    input_event: Some(protocol::user_input::InputEvent::WindowEvent(
+                        user_input::WindowEvent {
+                            action: WindowAction::Close as i32,
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0,
+                        },
+                    )),
+                })
+                .await?;
                 log::info!("Window ID {} destroyed (no server mapping)", window_id);
             }
         } else {
@@ -184,20 +221,19 @@ impl Client {
         keycode: sdl3::keyboard::Keycode,
         keymod: sdl3::keyboard::Mod,
     ) -> Result<()> {
-        self.stream
-            .send(UserInput {
-                window_id: *self
-                    .sdl_window_to_server_window
-                    .get(&window_id)
-                    .unwrap_or(&0),
-                kind: InputType::KeyEvent as i32,
-                input_event: Some(user_input::InputEvent::KeyEvent(user_input::KeyEvent {
-                    action: action as i32,
-                    key_code: keycode as i32,
-                    modifiers: keymod.bits() as u32,
-                })),
-            })
-            .await?;
+        self.send_input(UserInput {
+            window_id: *self
+                .sdl_window_to_server_window
+                .get(&window_id)
+                .unwrap_or(&0),
+            kind: InputType::KeyEvent as i32,
+            input_event: Some(user_input::InputEvent::KeyEvent(user_input::KeyEvent {
+                action: action as i32,
+                key_code: keycode as i32,
+                modifiers: keymod.bits() as u32,
+            })),
+        })
+        .await?;
         Ok(())
     }
 
@@ -239,20 +275,20 @@ impl Client {
             delta_x,
             delta_y
         );
-        self.stream
-            .send(UserInput {
-                window_id: server_window_id,
-                kind: InputType::MouseEvent as i32,
-                input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
-                    action: action as i32,
-                    x: mouse_x,
-                    y: mouse_y,
-                    button,
-                    delta_x,
-                    delta_y,
-                })),
-            })
-            .await?;
+        self.send_input(UserInput {
+            window_id: server_window_id,
+            kind: InputType::MouseEvent as i32,
+            input_event: Some(user_input::InputEvent::MouseEvent(user_input::MouseEvent {
+                action: action as i32,
+                x: mouse_x,
+                y: mouse_y,
+                button,
+                delta_x,
+                delta_y,
+                relative: false,
+            })),
+        })
+        .await?;
         Ok(())
     }
 
@@ -265,24 +301,23 @@ impl Client {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self.stream
-            .send(UserInput {
-                window_id: *self
-                    .sdl_window_to_server_window
-                    .get(&window_id)
-                    .unwrap_or(&0),
-                kind: InputType::WindowEvent as i32,
-                input_event: Some(user_input::InputEvent::WindowEvent(
-                    user_input::WindowEvent {
-                        action: action as i32,
-                        x,
-                        y,
-                        width,
-                        height,
-                    },
-                )),
-            })
-            .await?;
+        self.send_input(UserInput {
+            window_id: *self
+                .sdl_window_to_server_window
+                .get(&window_id)
+                .unwrap_or(&0),
+            kind: InputType::WindowEvent as i32,
+            input_event: Some(user_input::InputEvent::WindowEvent(
+                user_input::WindowEvent {
+                    action: action as i32,
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+            )),
+        })
+        .await?;
         Ok(())
     }
 
@@ -438,10 +473,24 @@ impl Client {
     }
 
     pub async fn main(&mut self) -> Result<()> {
+        if self.webrtc.is_some() {
+            self.main_webrtc().await
+        } else {
+            self.main_tcp().await
+        }
+    }
+
+    async fn main_tcp(&mut self) -> Result<()> {
         let mut event_pump = self.sdl.event_pump().map_err(|e| anyhow!(e))?;
         let mut last_frame_time = Instant::now();
         'running: loop {
-            match self.stream.receive().await {
+            let result = self
+                .stream
+                .as_mut()
+                .ok_or_else(|| anyhow!("TCP transport is unavailable"))?
+                .receive()
+                .await;
+            match result {
                 Ok(event) => {
                     if !self.handle_server_event(event).await? {
                         break 'running;
@@ -485,6 +534,100 @@ impl Client {
         for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
             self.destroy_window(window_id).await?;
         }
+        Ok(())
+    }
+
+    async fn main_webrtc(&mut self) -> Result<()> {
+        let session = self
+            .webrtc
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow!("WebRTC transport is unavailable"))?;
+        let signaling = self
+            .signaling
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow!("WebRTC signaling transport is unavailable"))?;
+        let mut event_pump = self.sdl.event_pump().map_err(|error| anyhow!(error))?;
+        let mut event_poll = tokio::time::interval(Duration::from_millis(8));
+        event_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        'running: loop {
+            tokio::select! {
+                frame = session.recv_video() => {
+                    let Some(frame) = frame else {
+                        log::info!("WebRTC video track closed");
+                        break 'running;
+                    };
+                    self.render_webrtc_frame(&frame)?;
+                }
+                incoming = signaling.receive() => {
+                    match incoming? {
+                        Some(WebRtcSignalEvent::Candidate(candidate)) => {
+                            session.add_ice_candidate(candidate)?;
+                        }
+                        Some(WebRtcSignalEvent::Status(status)) => {
+                            log::info!("Remote desktop: {status}");
+                        }
+                        None => {
+                            log::info!("WebRTC signaling connection closed");
+                            break 'running;
+                        }
+                    }
+                }
+                candidate = session.next_ice_candidate() => {
+                    if let Some(candidate) = candidate? {
+                        signaling.send_candidate(candidate).await?;
+                    }
+                }
+                _ = event_poll.tick() => {
+                    for event in event_pump.poll_iter() {
+                        if !self.handle_window_event(event).await? {
+                            break 'running;
+                        }
+                    }
+                }
+            }
+        }
+
+        for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
+            self.destroy_window(window_id).await?;
+        }
+        signaling.close().await?;
+        Ok(())
+    }
+
+    fn render_webrtc_frame(&mut self, frame: &libgsh::webrtc::DecodedVideoFrame) -> Result<()> {
+        if self.webrtc_frames_rendered == 0 {
+            log::info!(
+                "First WebRTC video frame decoded: {}x{}",
+                frame.width,
+                frame.height
+            );
+        }
+        self.webrtc_frames_rendered = self.webrtc_frames_rendered.saturating_add(1);
+        let Some((_, &sdl_window_id)) = self.server_window_to_sdl_window.iter().next() else {
+            log::warn!("Received WebRTC frame before any display window was created");
+            return Ok(());
+        };
+        let Some(window) = self.windows.get_mut(&sdl_window_id) else {
+            return Err(anyhow!("WebRTC display window mapping is stale"));
+        };
+        let texture_creator = window.canvas.texture_creator();
+        let mut texture = texture_creator.create_texture_streaming(
+            PixelFormat::BGRA32,
+            frame.width,
+            frame.height,
+        )?;
+        let _ = texture.set_blend_mode(BlendMode::None);
+        texture.update(None, &frame.bgra, frame.width as usize * 4)?;
+        window.canvas.set_draw_color(Color::BLACK);
+        window.canvas.clear();
+        window
+            .canvas
+            .copy(&texture, None, None)
+            .map_err(|error| anyhow!(error))?;
+        window.canvas.present();
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use super::ServerStream;
 use crate::{
+    pacing::FramePacer,
     shared::{
         auth::AuthVerifier,
         protocol::{client_message::ClientEvent, status_update::StatusType, ServerHelloAck},
@@ -63,7 +64,8 @@ pub trait GshServiceExt: GshService {
         self.on_startup(&mut stream).await?;
 
         log::trace!("Starting service main loop...");
-        let mut tick = tokio::time::interval(std::time::Duration::from_nanos(Self::FRAME_TIME_NS));
+        let mut tick = FramePacer::new(Self::MAX_FPS)
+            .map_err(|error| crate::ServiceError::Error(error.to_string()))?;
         'running: loop {
             tokio::select! {
                 res = stream.receive() => {
@@ -107,7 +109,7 @@ pub trait GshServiceExt: GshService {
                         },
                     }
                 }
-                _ = tick.tick() => {
+                _ = tick.wait_next() => {
                     self.on_tick(&mut stream).await?;
                 }
             }
