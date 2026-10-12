@@ -4,8 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-libgsh = { workspace = true }
+anyhow = "1.0"
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+futures-util = "0.3"
+libgsh = { workspace = true, features = ["webrtc"] }
 log = "0.4.27"
 env_logger = "0.11.8"
+rand = "0.9.1"
+reactor-webrtc = "=0.22.1"
+prost = "0.13.5"
+rustls-pemfile = "2"
+serde_json = "1.0"
 tokio = { version = "1.47", features = ["full"] }
 xcap = { version = "0.9.8", features = ["image"] }
+
+[dev-dependencies]
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }

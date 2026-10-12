@@ -35,7 +35,18 @@ fn tls_config(insecure: bool) -> anyhow::Result<rustls::ClientConfig> {
     let root_store = if insecure {
         rustls::RootCertStore::empty()
     } else {
-        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned())
+        let mut roots =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let native_roots = rustls_native_certs::load_native_certs();
+        for error in native_roots.errors {
+            log::warn!("Unable to load one native TLS root certificate: {error}");
+        }
+        for certificate in native_roots.certs {
+            if let Err(error) = roots.add(certificate) {
+                log::debug!("Skipping duplicate/invalid native TLS root: {error}");
+            }
+        }
+        roots
     };
     let mut config = rustls::ClientConfig::builder_with_details(
         CryptoProvider {
