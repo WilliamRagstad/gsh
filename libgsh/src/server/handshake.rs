@@ -1,16 +1,12 @@
 use super::ServerStream;
 use crate::shared::{
-    auth::AuthVerifier,
+    auth::{AuthVerifier, AuthenticationError},
     protocol::{
-        self, client_auth::AuthData, client_message::ClientEvent, server_auth_ack::AuthStatus,
-        server_hello_ack::AuthMethod, status_update::StatusType, ClientHello, ServerHelloAck,
+        self, client_message::ClientEvent, server_auth_ack::AuthStatus, status_update::StatusType,
+        ClientHello, ServerHelloAck,
     },
     HandshakeError,
 };
-use rsa::RsaPublicKey;
-use rsa::{pkcs1::DecodeRsaPublicKey, pkcs1v15::Signature};
-use rsa::{pkcs1v15::VerifyingKey, signature::Verifier};
-use sha2::Sha256;
 
 /// Negotiates protocol settings and optional authentication; rejects incompatible versions.
 pub async fn handshake(
@@ -40,125 +36,46 @@ pub async fn handshake(
     }
     stream.send(server_hello).await?;
 
-    if let Some(AuthMethod::Password(_)) = auth_method {
+    if auth_method.is_some() {
         let ClientEvent::ClientAuth(client_auth) = stream.receive().await? else {
             return Err(HandshakeError::AnyError(
                 "Expected ClientAuth message".into(),
             ));
         };
-        let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
-        let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
-        let AuthVerifier::Password(password_verifier) = auth_verifier else {
-            panic!("Password verifier is required for password authentication");
+        let result = match (auth_method.as_ref(), auth_verifier.as_ref()) {
+            (Some(method), Some(verifier)) => {
+                verifier.verify(method, client_auth.auth_data.as_ref())
+            }
+            _ => Err(AuthenticationError::MethodMismatch),
         };
-        let AuthData::Password(client_auth) = client_auth else {
-            return Err(HandshakeError::PasswordRequired);
-        };
-        if client_auth.password.is_empty() {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Failure as i32,
-                    message: "Password is required".to_string(),
-                })
-                .await?;
-            return Err(HandshakeError::PasswordRequired);
-        }
-        if !password_verifier.verify(&client_auth.password) {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Failure as i32,
-                    message: "Invalid password".to_string(),
-                })
-                .await?;
-            return Err(HandshakeError::InvalidPassword);
-        } else {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Success as i32,
-                    message: "Password verified".to_string(),
-                })
-                .await?;
-        }
-    } else if let Some(AuthMethod::Signature(server_auth)) = auth_method {
-        let ClientEvent::ClientAuth(client_auth) = stream.receive().await? else {
-            return Err(HandshakeError::AnyError(
-                "Expected ClientAuth message".into(),
-            ));
-        };
-        let auth_verifier = auth_verifier.expect("AuthVerifier is required for server handshake");
-        let client_auth = client_auth.auth_data.expect("ClientAuth data is required");
-        let AuthVerifier::Signature(signature_verifier) = auth_verifier else {
-            panic!("Signature verifier is required for signature authentication");
-        };
-        let AuthData::Signature(client_auth) = client_auth else {
-            return Err(HandshakeError::SignatureRequired);
-        };
-        if client_auth.signature.is_empty() {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Failure as i32,
-                    message: "Signature is required".to_string(),
-                })
-                .await?;
-            return Err(HandshakeError::SignatureRequired);
-        }
-        let public_key_pem = String::from_utf8_lossy(&client_auth.public_key);
-        let public_key = match RsaPublicKey::from_pkcs1_pem(&public_key_pem) {
-            Ok(public_key) => public_key,
-            Err(err) => {
+        match result {
+            Ok(()) => {
+                stream
+                    .send(protocol::ServerAuthAck {
+                        status: AuthStatus::Success as i32,
+                        message: "Authentication successful".to_string(),
+                    })
+                    .await?;
+            }
+            Err(error) => {
                 stream
                     .send(protocol::ServerAuthAck {
                         status: AuthStatus::Failure as i32,
-                        message: format!("Invalid public key: {}", err),
+                        message: error.to_string(),
                     })
                     .await?;
-                return Err(HandshakeError::SignatureInvalid);
+                return Err(match error {
+                    AuthenticationError::PasswordRequired => HandshakeError::PasswordRequired,
+                    AuthenticationError::InvalidPassword => HandshakeError::InvalidPassword,
+                    AuthenticationError::SignatureRequired => HandshakeError::SignatureRequired,
+                    AuthenticationError::SignatureInvalid => HandshakeError::SignatureInvalid,
+                    other => HandshakeError::AnyError(
+                        std::io::Error::new(std::io::ErrorKind::PermissionDenied, other).into(),
+                    ),
+                });
             }
-        };
-        let signature = match Signature::try_from(&client_auth.signature[..]) {
-            Ok(signature) => signature,
-            Err(err) => {
-                stream
-                    .send(protocol::ServerAuthAck {
-                        status: AuthStatus::Failure as i32,
-                        message: format!("Invalid signature: {}", err),
-                    })
-                    .await?;
-                return Err(HandshakeError::SignatureInvalid);
-            }
-        };
-
-        if !signature_verifier.verify(&public_key) {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Failure as i32,
-                    message: "Verification failed".to_string(),
-                })
-                .await?;
-            return Err(HandshakeError::SignatureInvalid);
         }
-        if !verify_signature(&server_auth.sign_message, signature, public_key) {
-            stream
-                .send(protocol::ServerAuthAck {
-                    status: AuthStatus::Failure as i32,
-                    message: "Verification failed".to_string(),
-                })
-                .await?;
-            return Err(HandshakeError::SignatureInvalid);
-        }
-        stream
-            .send(protocol::ServerAuthAck {
-                status: AuthStatus::Success as i32,
-                message: "Signature verified!".to_string(),
-            })
-            .await?;
     }
 
     Ok(client_hello)
-}
-
-/// Verify the signature using the public key and the sign message from the server
-fn verify_signature(sign_message: &[u8], signature: Signature, public_key: RsaPublicKey) -> bool {
-    let verifying_key = VerifyingKey::<Sha256>::new(public_key);
-    verifying_key.verify(sign_message, &signature).is_ok()
 }
