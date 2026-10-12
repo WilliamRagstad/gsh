@@ -361,7 +361,7 @@ async fn run_session_inner(socket: WebSocket, allow_remote_input: bool) -> anyho
                     Err(error) => eprintln!("rejected realtime input: {error}"),
                 }
             }
-            feedback = session.recv_encoder_feedback() => {
+            feedback = session.recv_encoder_feedback(), if session.encoder_feedback_available() => {
                 match feedback? {
                     libgsh::webrtc::VideoEncoderFeedback::RequestKeyFrame => {
                         // The raw-video track uses libwebrtc's built-in encoder;

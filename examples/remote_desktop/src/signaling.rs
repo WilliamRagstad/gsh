@@ -506,6 +506,9 @@ async fn run_webrtc_session(
     if nvenc_encoder.is_none() && !offers_vp8 {
         bail!("NVENC unavailable and remote offer has no VP8 software-fallback codec");
     }
+    if nvenc_encoder.is_none() {
+        log::info!("Using libwebrtc VP8 software fallback for this peer");
+    }
 
     let session = Arc::new(if nvenc_encoder.is_some() {
         GshSession::new_with_video_input(
@@ -729,7 +732,7 @@ async fn run_webrtc_session(
                 _ = &mut negotiation_deadline, if !session.is_connected() => {
                     bail!("timed out waiting for direct WebRTC ICE connection");
                 }
-                feedback = session.recv_encoder_feedback() => {
+                feedback = session.recv_encoder_feedback(), if session.encoder_feedback_available() => {
                     match feedback? {
                         libgsh::webrtc::VideoEncoderFeedback::RequestKeyFrame => {
                             if nvenc_input.is_some() {

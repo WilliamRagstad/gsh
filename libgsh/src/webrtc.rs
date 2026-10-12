@@ -417,6 +417,7 @@ pub struct GshSession {
     video_frames: Arc<LatestVideoQueue>,
     audio_rx: tokio::sync::Mutex<mpsc::Receiver<DecodedAudioFrame>>,
     feedback_rx: tokio::sync::Mutex<mpsc::Receiver<VideoEncoderFeedback>>,
+    encoder_feedback_available: bool,
     ice_rx: tokio::sync::Mutex<mpsc::Receiver<CandidateMessage>>,
     dropped_input: Arc<AtomicU64>,
     dropped_control: Arc<AtomicU64>,
@@ -583,6 +584,8 @@ impl GshSession {
             dropped_control: dropped_control.clone(),
             telemetry: telemetry.clone(),
         };
+        let encoder_feedback_available =
+            matches!(video.as_ref(), Some(SessionVideoTrack::PreEncoded(_)));
         if let Some(SessionVideoTrack::PreEncoded(video)) = video.as_ref() {
             let dropped_feedback = dropped_feedback.clone();
             video.on_encoder_feedback(move |feedback| {
@@ -769,6 +772,7 @@ impl GshSession {
             video_frames: video_frames.clone(),
             audio_rx: tokio::sync::Mutex::new(audio_rx),
             feedback_rx: tokio::sync::Mutex::new(feedback_rx),
+            encoder_feedback_available,
             ice_rx: tokio::sync::Mutex::new(ice_rx),
             dropped_input,
             dropped_control,
@@ -947,6 +951,10 @@ impl GshSession {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
             .is_some_and(|channel| channel.state() == DataChannelState::Open)
+    }
+
+    pub fn encoder_feedback_available(&self) -> bool {
+        self.encoder_feedback_available
     }
 
     /// Set libwebrtc's aggregate congestion-control bounds (bits per second).
@@ -1760,6 +1768,7 @@ mod tests {
                 240,
             )
             .unwrap();
+            assert!(!offerer.encoder_feedback_available());
             let mut bgra = vec![0; 320 * 240 * 4];
             assert!(matches!(
                 offerer.send_raw_video(&bgra),
