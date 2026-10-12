@@ -6,7 +6,7 @@ mod signaling;
 use anyhow::Context;
 use application::{RemoteDesktopApplication, RemoteDesktopAuth};
 use axum_server::tls_rustls::RustlsConfig;
-use frame_source::{FrameHub, FrameSource};
+use frame_source::{FrameForwarder, FrameHub, FrameSource};
 use libgsh::{
     async_trait::async_trait,
     server::{GshServer, GshService, GshServiceExt, ServerStream},
@@ -76,8 +76,6 @@ async fn main() -> anyhow::Result<()> {
         .find(|m| m.is_primary().unwrap_or(false))
         .or_else(|| Monitor::from_point(0, 0).ok())
         .ok_or_else(|| anyhow::anyhow!("no display found for screen capture"))?;
-    let width = monitor.width()?;
-    let height = monitor.height()?;
     let (video_recorder, video_stream) = monitor
         .video_recorder()
         .context("starting screen capture; select a display in the desktop ScreenCast portal and verify PipeWire is available")?;
@@ -86,6 +84,38 @@ async fn main() -> anyhow::Result<()> {
         .context("starting screen-capture recorder")?;
 
     let (frame_hub, capture_forwarder) = FrameHub::from_xcap(video_stream);
+    let mut initial_frames = frame_hub.subscribe();
+    let capture_ready = async {
+        let initial_frame = tokio::time::timeout(Duration::from_secs(10), initial_frames.next())
+            .await
+            .context("timed out waiting for the first captured screen frame")?
+            .ok_or_else(|| {
+                anyhow::anyhow!("screen-capture source closed before its first frame")
+            })?;
+        let (width, height) = (initial_frame.width, initial_frame.height);
+        anyhow::ensure!(
+            width > 0
+                && height > 0
+                && width <= 8192
+                && height <= 8192
+                && initial_frame.rgba.len() == width as usize * height as usize * 4,
+            "screen-capture source returned invalid frame dimensions or pixel data"
+        );
+        Ok::<_, anyhow::Error>((initial_frame, width, height))
+    }
+    .await;
+    let (initial_frame, width, height) = match capture_ready {
+        Ok(capture) => capture,
+        Err(error) => {
+            if let Err(cleanup_error) = stop_capture(&video_recorder, capture_forwarder).await {
+                log::warn!("Screen-capture cleanup failed after startup error: {cleanup_error:#}");
+            }
+            return Err(error);
+        }
+    };
+    log::info!("Screen capture ready at {width}x{height}");
+    drop(initial_frames);
+    drop(initial_frame);
 
     let application =
         RemoteDesktopApplication::new(frame_hub, auth, width, height, nvenc_supported);
@@ -120,15 +150,25 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     };
-    video_recorder
+    stop_capture(&video_recorder, capture_forwarder).await?;
+    server_result?;
+    Ok(())
+}
+
+async fn stop_capture(
+    video_recorder: &xcap::VideoRecorder,
+    capture_forwarder: FrameForwarder,
+) -> anyhow::Result<()> {
+    let recorder_result = video_recorder
         .stop()
-        .context("stopping screen-capture recorder")?;
+        .context("stopping screen-capture recorder");
     capture_forwarder.stop();
-    capture_forwarder
+    let forwarder_result = capture_forwarder
         .join()
         .await
-        .expect("Screen capture forwarding task failed");
-    server_result?;
+        .context("joining screen-capture frame forwarder");
+    recorder_result?;
+    forwarder_result?;
     Ok(())
 }
 
