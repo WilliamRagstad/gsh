@@ -50,6 +50,7 @@ pub struct Client {
     stream: Option<ClientStream>,
     webrtc: Option<Arc<GshSession>>,
     signaling: Option<Arc<WebRtcSignaling>>,
+    webrtc_frames_rendered: u64,
 }
 
 impl Client {
@@ -71,6 +72,7 @@ impl Client {
             stream: Some(stream),
             webrtc: None,
             signaling: None,
+            webrtc_frames_rendered: 0,
         }
     }
 
@@ -91,6 +93,7 @@ impl Client {
             stream: None,
             webrtc: Some(session),
             signaling: Some(Arc::new(signaling)),
+            webrtc_frames_rendered: 0,
         }
     }
 
@@ -595,6 +598,14 @@ impl Client {
     }
 
     fn render_webrtc_frame(&mut self, frame: &libgsh::webrtc::DecodedVideoFrame) -> Result<()> {
+        if self.webrtc_frames_rendered == 0 {
+            log::info!(
+                "First WebRTC video frame decoded: {}x{}",
+                frame.width,
+                frame.height
+            );
+        }
+        self.webrtc_frames_rendered = self.webrtc_frames_rendered.saturating_add(1);
         let Some((_, &sdl_window_id)) = self.server_window_to_sdl_window.iter().next() else {
             log::warn!("Received WebRTC frame before any display window was created");
             return Ok(());
@@ -603,7 +614,7 @@ impl Client {
             return Err(anyhow!("WebRTC display window mapping is stale"));
         };
         let texture_creator = window.canvas.texture_creator();
-        let mut texture = texture_creator.create_texture_target(
+        let mut texture = texture_creator.create_texture_streaming(
             PixelFormat::BGRA32,
             frame.width,
             frame.height,

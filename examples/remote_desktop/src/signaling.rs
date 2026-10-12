@@ -533,6 +533,13 @@ async fn run_webrtc_session(
         kind: libgsh::webrtc::DescriptionKind::Offer,
         sdp: offer.sdp,
     })?;
+    log::info!(
+        "WebRTC peer negotiated {:?}; capture={}x{}; NVENC={}",
+        session.negotiated_video_codec(),
+        width,
+        height,
+        nvenc_encoder.is_some()
+    );
     for candidate in offer.candidates {
         session.add_ice_candidate(candidate)?;
     }
@@ -673,7 +680,12 @@ async fn run_webrtc_session(
                             .unwrap_or_default() as u32,
                     };
                     match session.send_video(frame) {
-                        Ok(()) => frame_number = frame_number.wrapping_add(1),
+                        Ok(()) => note_video_frame_submitted(
+                            &mut frame_number,
+                            VideoCodec::H264,
+                            OUTPUT_WIDTH,
+                            OUTPUT_HEIGHT,
+                        ),
                         Err(error) if matches!(error.error, libgsh::webrtc::SessionError::VideoBackpressure) => {
                             pending_encoded_frame = error.frame;
                         }
@@ -685,7 +697,12 @@ async fn run_webrtc_session(
                         let mut capture_slot_open = true;
                         if let Some(frame) = pending_encoded_frame.take() {
                             match session.send_video(frame) {
-                                Ok(()) => frame_number = frame_number.wrapping_add(1),
+                                Ok(()) => note_video_frame_submitted(
+                                    &mut frame_number,
+                                    VideoCodec::H264,
+                                    OUTPUT_WIDTH,
+                                    OUTPUT_HEIGHT,
+                                ),
                                 Err(error) if matches!(error.error, libgsh::webrtc::SessionError::VideoBackpressure) => {
                                     pending_encoded_frame = error.frame;
                                     capture_slot_open = false;
@@ -709,7 +726,12 @@ async fn run_webrtc_session(
                             } else if session.negotiated_video_codec() == Some(VideoCodec::Vp8) {
                                 let bgra = rgba_to_bgra(&current_frame.rgba)?;
                                 match session.send_raw_video(&bgra) {
-                                    Ok(()) => frame_number = frame_number.wrapping_add(1),
+                                    Ok(()) => note_video_frame_submitted(
+                                        &mut frame_number,
+                                        VideoCodec::Vp8,
+                                        width,
+                                        height,
+                                    ),
                                     Err(libgsh::webrtc::SessionError::VideoBackpressure) => {
                                         log::trace!("Raw VP8 frame skipped under encoder backpressure");
                                     }
@@ -1034,6 +1056,13 @@ fn rgba_to_bgra(rgba: &[u8]) -> Result<Vec<u8>> {
         pixel.swap(0, 2);
     }
     Ok(bgra)
+}
+
+fn note_video_frame_submitted(frame_number: &mut u32, codec: VideoCodec, width: u32, height: u32) {
+    if *frame_number == 0 {
+        log::info!("First {codec:?} video frame submitted: {width}x{height}");
+    }
+    *frame_number = frame_number.wrapping_add(1);
 }
 
 fn browser_key_code(code: &str) -> Option<i32> {
